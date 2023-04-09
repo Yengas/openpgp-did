@@ -71,9 +71,7 @@ fn get_passphrase(dsc: u32) -> Secret<String> {
 fn main() {
     let backend = get_card_backend().expect("got some error when listing the cards");
     let mut openpgp = OpenPgp::new(backend);
-    println!("initialied the OpenPgp correctly");
-
-    let data: Vec<u8> = vec![0, 1, 2];
+    println!("initialized the OpenPgp correctly");
 
     let card_info = openpgp.get_card_info().expect("could not get card info");
 
@@ -84,29 +82,25 @@ fn main() {
 
     println!("current signing counter is: {}", card_info.signing_counter);
 
+    let jwt_to_sign: Vec<u8> = b"eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJ2YyI6eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvMjAxOC9jcmVkZW50aWFscy92MSJdLCJ0eXBlIjpbIlZlcmlmaWFibGVDcmVkZW50aWFsIl0sImNyZWRlbnRpYWxTdWJqZWN0Ijp7InlvdSI6IlJvY2sifX0sInN1YiI6ImRpZDp3ZWI6ZXhhbXBsZS5jb20iLCJuYmYiOjE2ODEwNTI4MDQsImlzcyI6ImRpZDp3ZWI6eWlnaXRjYW4uZGV2In0".to_vec();
     let passphrase = get_passphrase(card_info.signing_counter);
+    let mut transaction = openpgp.transaction().expect("could not create transaction");
+
     assert!(
-        openpgp
-            .transaction()
-            .and_then(|mut transaction| {
-                match transaction.verify_pw1_sign(passphrase.expose_secret().as_bytes()) {
-                    Ok(_) => Ok(transaction),
-                    Err(err) => Err(err),
-                }
-            })
+        transaction
+            .verify_pw1_sign(passphrase.expose_secret().as_bytes())
             .is_ok(),
         "the pin was not accepted!"
     );
 
-    match openpgp
-        .transaction()
-        .and_then(|mut transaction| transaction.pso_compute_digital_signature(data))
-    {
-        Ok(signature) => {
-            let str = engine::general_purpose::URL_SAFE_NO_PAD.encode(signature);
+    let signature_bytes = transaction
+        .pso_compute_digital_signature(jwt_to_sign.clone())
+        .expect("could not sign the jwt");
+    let signature_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(signature_bytes);
 
-            println!("got signature => {}", str);
-        }
-        Err(err) => println!("got some error when signing data: {}", err),
-    }
+    println!(
+        "signed jwt: {}.{}",
+        String::from_utf8(jwt_to_sign).unwrap(),
+        signature_base64
+    );
 }
