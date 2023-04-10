@@ -1,10 +1,17 @@
 use std::error::Error;
 
 use base64::{engine, Engine};
+use did_web::DIDWeb;
 use openpgp_card::{crypto_data::PublicKeyMaterial, OpenPgp};
 use openpgp_card_pcsc::PcscBackend;
 use pinentry::PassphraseInput;
 use secrecy::{ExposeSecret, Secret};
+use ssi::{
+    jsonld::ContextLoader,
+    jwk::{Algorithm, Base64urlUInt, OctetParams, Params, JWK},
+    ldp::{ProofSuite, ProofSuiteType, SigningInput},
+    vc::{Credential, LinkedDataProofOptions, URI},
+};
 
 struct SmartCardInfo {
     signing_key_pub_base64: String,
@@ -68,7 +75,8 @@ fn get_passphrase(dsc: u32) -> Secret<String> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let backend = get_card_backend().expect("got some error when listing the cards");
     let mut openpgp = OpenPgp::new(backend);
     println!("initialized the OpenPgp correctly");
@@ -82,7 +90,75 @@ fn main() {
 
     println!("current signing counter is: {}", card_info.signing_counter);
 
-    let jwt_to_sign: Vec<u8> = b"eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJ2YyI6eyJAY29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvMjAxOC9jcmVkZW50aWFscy92MSJdLCJ0eXBlIjpbIlZlcmlmaWFibGVDcmVkZW50aWFsIl0sImNyZWRlbnRpYWxTdWJqZWN0Ijp7InlvdSI6IlJvY2sifX0sInN1YiI6ImRpZDp3ZWI6ZXhhbXBsZS5jb20iLCJuYmYiOjE2ODEwNTI4MDQsImlzcyI6ImRpZDp3ZWI6eWlnaXRjYW4uZGV2In0".to_vec();
+    let mut credential: Credential = serde_json::from_str(
+        r#"
+{
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://www.w3.org/2018/credentials/examples/v1"
+  ],
+  "id": "https://example.edu/credentials/3732",
+  "issuer": "did:web:yigitcan.dev",
+  "type": ["VerifiableCredential", "UniversityDegreeCredential"],
+  "credentialSubject": {
+    "id": "did:example:ebfeb1f712ebc6f1c276e12ec21",
+    "degree": {
+      "type": "BachelorDegree",
+      "name": "Bachelor of Science and Arts"
+    }
+  },
+  "issuanceDate": "2021-04-08T15:01:20.110Z"
+}
+"#,
+    )
+    .expect("could not parse credential");
+
+    let proof_suite: Box<dyn ProofSuite> = Box::new(ProofSuiteType::JsonWebSignature2020);
+    let jwk = JWK {
+        public_key_use: Some("sig".to_string()),
+        key_operations: Some(vec!["sig".to_string()]),
+        algorithm: Some(Algorithm::EdDSA),
+        key_id: Some(
+            "did:web:yigitcan.dev#AD9t5zc7yeWQNQr2QbsydsX-b59zgOrPgcDJcEXBZzk".to_string(),
+        ),
+        x509_url: None,
+        x509_certificate_chain: None,
+        x509_thumbprint_sha1: None,
+        x509_thumbprint_sha256: None,
+        params: Params::OKP(OctetParams {
+            curve: "Ed25519".to_string(),
+            public_key: Base64urlUInt(
+                engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode("AD9t5zc7yeWQNQr2QbsydsX-b59zgOrPgcDJcEXBZzk")
+                    .expect("public key is not valid"),
+            ),
+            private_key: None,
+        }),
+    };
+
+    let proof_preparation = proof_suite
+        .prepare(
+            &credential,
+            &LinkedDataProofOptions {
+                verification_method: Some(URI::String(
+                    "did:web:yigitcan.dev#AD9t5zc7yeWQNQr2QbsydsX-b59zgOrPgcDJcEXBZzk".to_string(),
+                )),
+                ..LinkedDataProofOptions::default()
+            },
+            &DIDWeb,
+            &mut ContextLoader::default(),
+            &jwk,
+            None,
+        )
+        .await
+        .expect("could not prepare the proof");
+
+    let bytes_to_sign = match &proof_preparation.signing_input {
+        SigningInput::Bytes(base64_url_uint) => Some(base64_url_uint.0.clone()),
+        _ => None,
+    }
+    .expect("no bytes to sign");
+
     let passphrase = get_passphrase(card_info.signing_counter);
     let mut transaction = openpgp.transaction().expect("could not create transaction");
 
@@ -94,13 +170,19 @@ fn main() {
     );
 
     let signature_bytes = transaction
-        .pso_compute_digital_signature(jwt_to_sign.clone())
+        .pso_compute_digital_signature(bytes_to_sign.clone())
         .expect("could not sign the jwt");
     let signature_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(signature_bytes);
 
+    let proof = proof_suite
+        .complete(&proof_preparation, &signature_base64)
+        .await
+        .expect("could not complete proof preparation");
+
+    credential.add_proof(proof);
+
     println!(
-        "signed jwt: {}.{}",
-        String::from_utf8(jwt_to_sign).unwrap(),
-        signature_base64
+        "signed credential:\n{}",
+        serde_json::to_string_pretty(&credential).expect("can not stringify credential"),
     );
 }
