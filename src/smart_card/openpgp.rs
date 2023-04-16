@@ -132,7 +132,7 @@ impl SmartCard for OpenPgpSmartCard {
         });
     }
 
-    fn sign_data(&mut self, key: SigningKey, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn sign_data(&mut self, key: &SigningKey, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         if *key.curve() != SigningKeyCurve::Ed25519 {
             return Err("can only sign with ed25519".into());
         }

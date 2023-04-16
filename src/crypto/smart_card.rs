@@ -10,5 +10,5 @@ pub struct SmartCardInfo {
 
 pub trait SmartCard {
     fn get_card_info(&mut self) -> Result<SmartCardInfo, Box<dyn Error>>;
-    fn sign_data(&mut self, key: SigningKey, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>;
+    fn sign_data(&mut self, key: &SigningKey, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>;
 }
