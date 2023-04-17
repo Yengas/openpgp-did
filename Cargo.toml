@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.21.0"
+clap = "4.2.2"
 did-web = "0.2.1"
 openpgp-card = "0.3.4"
 openpgp-card-pcsc = "0.3.0"

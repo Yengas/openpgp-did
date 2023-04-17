@@ -5,5 +5,5 @@ mod ssi;
 
 #[tokio::main]
 async fn main() {
-    cli::run().await
+    cli::run().await.expect("could not execute the CLI")
 }
