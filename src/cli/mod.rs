@@ -27,21 +27,22 @@ async fn cmd_sign_credential() -> Result<(), Box<dyn Error>> {
     let unsigned_credential: Credential = serde_json::from_str(
         r#"
 {
-"@context": [
-"https://www.w3.org/2018/credentials/v1",
-"https://www.w3.org/2018/credentials/examples/v1"
-],
-"id": "https://example.edu/credentials/3732",
-"issuer": "did:web:yigitcan.dev",
-"type": ["VerifiableCredential", "UniversityDegreeCredential"],
-"credentialSubject": {
-"id": "did:example:ebfeb1f712ebc6f1c276e12ec21",
-"degree": {
-"type": "BachelorDegree",
-"name": "Bachelor of Science and Arts"
-}
-},
-"issuanceDate": "2021-04-08T15:01:20.110Z"
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://www.w3.org/2018/credentials/examples/v1",
+    "https://w3id.org/security/suites/jws-2020/v1"
+  ],
+  "id": "https://trakya.edu.tr/credentials/0001",
+  "issuer": "did:web:yigitcan.dev",
+  "type": ["VerifiableCredential", "UniversityDegreeCredential"],
+  "credentialSubject": {
+    "id": "did:web:yigitcan.dev",
+    "degree": {
+      "type": "BachelorDegree",
+      "name": "Bachelor of Computer Science"
+    }
+  },
+  "issuanceDate": "2019-05-08T15:01:20.110Z"
 }
 "#,
     )
