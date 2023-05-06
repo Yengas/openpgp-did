@@ -1,10 +1,11 @@
 use std::error::Error;
 
-use super::key::{EncryptionKey, SigningKey};
+use super::key::{Key, SigningKey};
 
+#[derive(Debug)]
 pub struct SmartCardInfo {
-    pub signing_key: SigningKey,
-    pub encryption_key: EncryptionKey,
+    pub card_info: String,
+    pub keys: Vec<Key>,
     pub signing_counter: u32,
 }
 

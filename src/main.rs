@@ -3,7 +3,9 @@ mod crypto;
 mod smart_card;
 mod ssi;
 
+use crate::cli::cli::run;
+
 #[tokio::main]
 async fn main() {
-    cli::run().await.expect("could not execute the CLI")
+    run().await.expect("could not execute the CLI")
 }

@@ -15,13 +15,22 @@ pub enum EncryptionKeyCurve {
 // SigningKey struct
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct SigningKey {
+    fingerprint: String,
     curve: SigningKeyCurve,
-    data: Vec<u8>,
+    pub_data: Vec<u8>,
 }
 
 impl SigningKey {
-    pub fn new(curve: SigningKeyCurve, data: Vec<u8>) -> Self {
-        Self { curve, data }
+    pub fn new(fingerprint: String, curve: SigningKeyCurve, pub_data: Vec<u8>) -> Self {
+        Self {
+            fingerprint,
+            curve,
+            pub_data,
+        }
+    }
+
+    pub fn fingerprint(&self) -> &String {
+        &self.fingerprint
     }
 
     pub fn curve(&self) -> &SigningKeyCurve {
@@ -29,20 +38,29 @@ impl SigningKey {
     }
 
     pub fn pub_data(&self) -> &[u8] {
-        &self.data
+        &self.pub_data
     }
 }
 
 // EncryptionKey struct
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct EncryptionKey {
+    fingerprint: String,
     curve: EncryptionKeyCurve,
-    data: Vec<u8>,
+    pub_data: Vec<u8>,
 }
 
 impl EncryptionKey {
-    pub fn new(curve: EncryptionKeyCurve, data: Vec<u8>) -> Self {
-        Self { curve, data }
+    pub fn new(fingerprint: String, curve: EncryptionKeyCurve, pub_data: Vec<u8>) -> Self {
+        Self {
+            fingerprint,
+            curve,
+            pub_data,
+        }
+    }
+
+    pub fn fingerprint(&self) -> &String {
+        &self.fingerprint
     }
 
     pub fn curve(&self) -> &EncryptionKeyCurve {
@@ -50,7 +68,7 @@ impl EncryptionKey {
     }
 
     pub fn pub_data(&self) -> &[u8] {
-        &self.data
+        &self.pub_data
     }
 }
 
