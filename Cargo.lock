@@ -1611,24 +1611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "idagent"
-version = "0.1.0"
-dependencies = [
- "base64 0.21.0",
- "clap",
- "did-web",
- "openpgp-card",
- "openpgp-card-pcsc",
- "pinentry",
- "prettytable-rs",
- "secrecy",
- "serde_json",
- "ssi",
- "tokio",
- "which",
-]
-
-[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2416,6 +2398,24 @@ dependencies = [
  "log",
  "openpgp-card",
  "pcsc",
+]
+
+[[package]]
+name = "openpgp-did"
+version = "0.1.0"
+dependencies = [
+ "base64 0.21.0",
+ "clap",
+ "did-web",
+ "openpgp-card",
+ "openpgp-card-pcsc",
+ "pinentry",
+ "prettytable-rs",
+ "secrecy",
+ "serde_json",
+ "ssi",
+ "tokio",
+ "which",
 ]
 
 [[package]]

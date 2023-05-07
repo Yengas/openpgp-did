@@ -3,15 +3,15 @@ use std::error::Error;
 use crate::cli::{cmd_card, cmd_ssi};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
-    let cmd = clap::Command::new("idagent")
-        .bin_name("idagent")
+    let cmd = clap::Command::new("openpgp-did")
+        .bin_name("openpgp-did")
         .version("0.1")
         .author("Yiğitcan UÇUM <yigitcan@hotmail.com.tr>")
-        .subcommand_required(true)
+        .arg_required_else_help(true)
         .subcommand(
             clap::Command::new("card")
                 .about("OpenPGP card related operations")
-                .subcommand_required(true)
+                .arg_required_else_help(true)
                 .subcommand(
                     clap::Command::new("info")
                         .about("Output human-readable information about your card"),
@@ -25,7 +25,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         .subcommand(
             clap::Command::new("ssi")
                 .about("Self-sovereign Identity related operations")
-                .subcommand_required(true)
+                .arg_required_else_help(true)
                 .subcommand(
                     clap::Command::new("sign-credential")
                         .about("Create proof and append it to an unsigned verifiable credential"),
