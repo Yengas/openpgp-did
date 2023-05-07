@@ -4,7 +4,7 @@ use ssi::vc::Credential;
 
 use crate::cli::create_did;
 
-pub async fn cmd_sign_credential() -> Result<(), Box<dyn Error>> {
+pub async fn cmd_ssi_sign_credential() -> Result<(), Box<dyn Error>> {
     let mut did = create_did::create().expect("could not create did");
 
     let unsigned_credential: Credential = serde_json::from_str(

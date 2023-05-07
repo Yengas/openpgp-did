@@ -158,11 +158,14 @@ fn convert_firmware_version_to_string(firmware_version: Vec<u8>) -> String {
 impl SmartCard for OpenPgpSmartCard {
     fn get_card_info(&mut self) -> Result<SmartCardInfo, Box<dyn Error>> {
         let mut transaction = self.openpgp.transaction()?;
-        let firmware_version: String =
-            convert_firmware_version_to_string(transaction.firmware_version()?);
-        let template = transaction.security_support_template()?;
 
-        let fingerprints = transaction.application_related_data()?.fingerprints()?;
+        let application_related_data = transaction.application_related_data()?;
+        let application_identifier = application_related_data.application_id()?.to_string();
+
+        let firmware_version = convert_firmware_version_to_string(transaction.firmware_version()?);
+        let signing_counter = transaction.security_support_template()?.signature_count();
+
+        let fingerprints = application_related_data.fingerprints()?;
         let signing_key = get_signing_key(
             &mut transaction,
             fingerprints.signature().unwrap().to_string(),
@@ -173,9 +176,10 @@ impl SmartCard for OpenPgpSmartCard {
         )?;
 
         return Ok(SmartCardInfo {
-            card_info: format!("Yubikey - {}", firmware_version),
+            application_identifier,
+            firmware_version,
+            signing_counter,
             keys: vec![Key::Signing(signing_key), Key::Encryption(encryption_key)],
-            signing_counter: template.signature_count(),
         });
     }
 

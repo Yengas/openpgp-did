@@ -4,7 +4,8 @@ use super::key::{Key, SigningKey};
 
 #[derive(Debug)]
 pub struct SmartCardInfo {
-    pub card_info: String,
+    pub application_identifier: String,
+    pub firmware_version: String,
     pub keys: Vec<Key>,
     pub signing_counter: u32,
 }

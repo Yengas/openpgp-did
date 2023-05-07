@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use base64::{engine, Engine};
 use prettytable::{Cell, Row, Table};
 
 use crate::{
@@ -17,7 +18,51 @@ pub async fn cmd_card_info() -> Result<(), Box<dyn Error>> {
         .get_card_info()
         .expect("could not get smart card info");
 
-    println!("{:?}", smart_card_info);
+    let mut general_info_table = Table::new();
+
+    general_info_table.add_row(Row::new(vec![
+        Cell::new("Application Identifier="),
+        Cell::new(smart_card_info.application_identifier.as_str()),
+    ]));
+
+    general_info_table.add_row(Row::new(vec![
+        Cell::new("Firmware Version="),
+        Cell::new(smart_card_info.firmware_version.as_str()),
+    ]));
+
+    general_info_table.add_row(Row::new(vec![
+        Cell::new("Digital Signature Counter="),
+        Cell::new(smart_card_info.signing_counter.to_string().as_str()),
+    ]));
+
+    println!("=== GENERAL INFO ===");
+    general_info_table.printstd();
+
+    let mut keys_table = Table::new();
+
+    keys_table.add_row(Row::new(vec![
+        Cell::new("Fingerprint"),
+        Cell::new("Type"),
+        Cell::new("Curve"),
+        Cell::new("Public Key Base64(URL Safe, No Pad)"),
+    ]));
+
+    for key in smart_card_info.keys {
+        let public_key_as_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(key.pub_data());
+
+        keys_table.add_row(Row::new(vec![
+            Cell::new(key.fingerprint().as_str()),
+            Cell::new(match key {
+                Key::Signing(_) => "Signing",
+                Key::Encryption(_) => "Encryption",
+            }),
+            Cell::new(key.curve_as_string().as_str()),
+            Cell::new(public_key_as_base64.as_str()),
+        ]));
+    }
+
+    println!("=== KEYS ===");
+    keys_table.printstd();
 
     Ok(())
 }
