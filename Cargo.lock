@@ -2430,6 +2430,7 @@ dependencies = [
  "clap",
  "did-web",
  "dirs",
+ "iref",
  "openpgp-card",
  "openpgp-card-pcsc",
  "pinentry",

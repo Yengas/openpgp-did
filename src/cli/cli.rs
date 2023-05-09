@@ -30,7 +30,8 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                 .arg_required_else_help(true)
                 .subcommand(
                     clap::Command::new("init").about("Initialize your DID for further operations"),
-                ),
+                )
+                .subcommand(clap::Command::new("document").about("Export your DID Document")),
         )
         .subcommand(
             clap::Command::new("ssi")
@@ -52,6 +53,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         },
         Some(("did", arg_matches)) => match arg_matches.subcommand() {
             Some(("init", _)) => cmd_did::cmd_did_init().await,
+            Some(("document", _)) => cmd_did::cmd_did_document().await,
             _ => Err("invalid command".into()),
         },
         Some(("ssi", arg_matches)) => match arg_matches.subcommand() {

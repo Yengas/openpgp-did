@@ -11,7 +11,10 @@ use crate::{
     ssi::DidConfiguration,
 };
 
-use super::config::{does_valid_did_configuration_exist, save_did_configuration};
+use super::{
+    config::{does_valid_did_configuration_exist, save_did_configuration},
+    create_did,
+};
 
 fn ask_user(question: &str) -> Result<String, Box<dyn Error>> {
     print!("{}", question);
@@ -72,6 +75,18 @@ pub async fn cmd_did_init() -> Result<(), Box<dyn Error>> {
         .expect("could not write did configuration file");
 
     println!("Your DID Configuration was written successfully!");
+
+    Ok(())
+}
+
+pub async fn cmd_did_document() -> Result<(), Box<dyn Error>> {
+    let did = create_did::create().await?;
+    let document = did.did_document();
+
+    let document_json_str =
+        serde_json::to_string_pretty(document).expect("could not stringify did document");
+
+    println!("{}", document_json_str);
 
     Ok(())
 }
