@@ -2,6 +2,6 @@ mod cmd_card;
 mod cmd_did;
 mod cmd_ssi;
 mod config;
-mod create_did;
+mod utils;
 
 pub mod cli;

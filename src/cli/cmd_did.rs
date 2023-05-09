@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     config::{does_valid_did_configuration_exist, save_did_configuration},
-    create_did,
+    utils,
 };
 
 fn ask_user(question: &str) -> Result<String, Box<dyn Error>> {
@@ -80,7 +80,7 @@ pub async fn cmd_did_init() -> Result<(), Box<dyn Error>> {
 }
 
 pub async fn cmd_did_document() -> Result<(), Box<dyn Error>> {
-    let did = create_did::create().await?;
+    let did = utils::create_did().await?;
     let document = did.did_document();
 
     let document_json_str =

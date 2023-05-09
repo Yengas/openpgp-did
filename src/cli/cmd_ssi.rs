@@ -3,32 +3,24 @@ use std::error::Error;
 use chrono::Timelike;
 use ssi::vc::{Credential, Issuer, VCDateTime, URI};
 
-use crate::cli::create_did;
+use super::utils::{create_did, read_file_by_path};
 
-pub async fn cmd_ssi_sign_credential() -> Result<(), Box<dyn Error>> {
-    let mut did = create_did::create().await?;
+async fn read_unsigned_credential_by_path(
+    path: Option<&str>,
+) -> Result<Credential, Box<dyn Error>> {
+    let credential_json_str = read_file_by_path(path)
+        .await
+        .expect("could not read credential file");
 
-    let mut unsigned_credential: Credential = serde_json::from_str(
-        r#"
-{
-"@context": [
-  "https://www.w3.org/2018/credentials/v1",
-  "https://www.w3.org/2018/credentials/examples/v1",
-  "https://w3id.org/security/suites/jws-2020/v1"
-],
-"id": "https://trakya.edu.tr/credentials/0001",
-"type": ["VerifiableCredential", "UniversityDegreeCredential"],
-"credentialSubject": {
-  "id": "did:web:yigitcan.dev",
-  "degree": {
-    "type": "BachelorDegree",
-    "name": "Bachelor of Computer Science"
-  }
+    Ok(serde_json::from_str::<Credential>(&credential_json_str)
+        .expect("could not parse file into Credential"))
 }
-}
-"#,
-    )
-    .expect("could not parse credential");
+
+pub async fn cmd_ssi_sign_credential(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
+    let mut did = create_did().await?;
+    let mut unsigned_credential = read_unsigned_credential_by_path(file_path)
+        .await
+        .expect("could not read credential");
 
     unsigned_credential.issuer = Some(Issuer::URI(URI::String(did.did_url().to_string())));
     if unsigned_credential.issuance_date == None {

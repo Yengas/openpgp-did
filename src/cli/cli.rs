@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use clap::Arg;
+
 use crate::cli::{cmd_card, cmd_ssi};
 
 use super::cmd_did;
@@ -39,6 +41,14 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                 .arg_required_else_help(true)
                 .subcommand(
                     clap::Command::new("sign-credential")
+                        .arg(
+                            Arg::new("file")
+                            .required(false)
+                            .short('f')
+                            .long("file")
+                            .value_name("FILE")
+                            .help("Sets the input file to use as the credential. Omit or use '-' for stdin."),
+                        )
                         .about("Create proof and append it to an unsigned verifiable credential"),
                 ),
         );
@@ -57,7 +67,12 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             _ => Err("invalid command".into()),
         },
         Some(("ssi", arg_matches)) => match arg_matches.subcommand() {
-            Some(("sign-credential", _)) => cmd_ssi::cmd_ssi_sign_credential().await,
+            Some(("sign-credential", args)) => {
+                cmd_ssi::cmd_ssi_sign_credential(
+                    args.get_one::<String>("file").map(|str| str.as_str()),
+                )
+                .await
+            }
             _ => Err("invalid command".into()),
         },
         _ => Err("invalid command".into()),
