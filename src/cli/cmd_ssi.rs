@@ -1,13 +1,14 @@
 use std::error::Error;
 
-use ssi::vc::Credential;
+use chrono::Timelike;
+use ssi::vc::{Credential, Issuer, VCDateTime, URI};
 
 use crate::cli::create_did;
 
 pub async fn cmd_ssi_sign_credential() -> Result<(), Box<dyn Error>> {
-    let mut did = create_did::create().expect("could not create did");
+    let mut did = create_did::create().await?;
 
-    let unsigned_credential: Credential = serde_json::from_str(
+    let mut unsigned_credential: Credential = serde_json::from_str(
         r#"
 {
 "@context": [
@@ -16,7 +17,6 @@ pub async fn cmd_ssi_sign_credential() -> Result<(), Box<dyn Error>> {
   "https://w3id.org/security/suites/jws-2020/v1"
 ],
 "id": "https://trakya.edu.tr/credentials/0001",
-"issuer": "did:web:yigitcan.dev",
 "type": ["VerifiableCredential", "UniversityDegreeCredential"],
 "credentialSubject": {
   "id": "did:web:yigitcan.dev",
@@ -24,12 +24,18 @@ pub async fn cmd_ssi_sign_credential() -> Result<(), Box<dyn Error>> {
     "type": "BachelorDegree",
     "name": "Bachelor of Computer Science"
   }
-},
-"issuanceDate": "2019-05-08T15:01:20.110Z"
+}
 }
 "#,
     )
     .expect("could not parse credential");
+
+    unsigned_credential.issuer = Some(Issuer::URI(URI::String(did.did_url().to_string())));
+    if unsigned_credential.issuance_date == None {
+        let current_date_time = chrono::Utc::now().with_nanosecond(0).unwrap();
+
+        unsigned_credential.issuance_date = Some(VCDateTime::from(current_date_time));
+    }
 
     let signed_credential = did
         .create_signed_credential(&unsigned_credential)

@@ -7,14 +7,18 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.21.0"
+chrono = "0.4.24"
 clap = "4.2.7"
 did-web = "0.2.1"
+dirs = "5.0.1"
 openpgp-card = "0.3.5"
 openpgp-card-pcsc = "0.3.1"
 pinentry = "0.5.0"
 prettytable-rs = "0.10.0"
 secrecy = "0.8.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.96"
+serde_yaml = "0.9.21"
 ssi = "0.6.0"
 tokio = { version = "1.28.0", features = ["full"] }
 which = "4.4.0"

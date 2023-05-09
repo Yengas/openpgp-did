@@ -2,6 +2,8 @@ use std::error::Error;
 
 use crate::cli::{cmd_card, cmd_ssi};
 
+use super::cmd_did;
+
 pub async fn run() -> Result<(), Box<dyn Error>> {
     let cmd = clap::Command::new("openpgp-did")
         .bin_name("openpgp-did")
@@ -23,6 +25,14 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                 ),
         )
         .subcommand(
+            clap::Command::new("did")
+                .about("DID and DID Document related operations")
+                .arg_required_else_help(true)
+                .subcommand(
+                    clap::Command::new("init").about("Initialize your DID for further operations"),
+                ),
+        )
+        .subcommand(
             clap::Command::new("ssi")
                 .about("Self-sovereign Identity related operations")
                 .arg_required_else_help(true)
@@ -38,6 +48,10 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         Some(("card", arg_matches)) => match arg_matches.subcommand() {
             Some(("info", _)) => cmd_card::cmd_card_info().await,
             Some(("diagnostic", _)) => cmd_card::cmd_card_diagnostic().await,
+            _ => Err("invalid command".into()),
+        },
+        Some(("did", arg_matches)) => match arg_matches.subcommand() {
+            Some(("init", _)) => cmd_did::cmd_did_init().await,
             _ => Err("invalid command".into()),
         },
         Some(("ssi", arg_matches)) => match arg_matches.subcommand() {
