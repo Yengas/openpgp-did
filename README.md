@@ -16,6 +16,26 @@ Check out [Youtube - How to set up Git commit signing with GPG and a YubiKey on 
 
 You can ensure the initial setup is properly completed by running `openpgp-did card diagnostic`. You should see **SUCCESS** for all the diagnostic checks.
 
+```
+$ openpgp-did card diagnostic 
+
++---------+--------------------------------------+---------+
+| Code    | Description                          | Result  |
++---------+--------------------------------------+---------+
+| DIAG-01 | card connection must be successful   | SUCCESS |
++---------+--------------------------------------+---------+
+| DIAG-02 | card information must be read        | SUCCESS |
++---------+--------------------------------------+---------+
+| DIAG-03 | signing key must exist               | SUCCESS |
++---------+--------------------------------------+---------+
+| DIAG-04 | encryption key must exist            | SUCCESS |
++---------+--------------------------------------+---------+
+| DIAG-05 | signing key curve must be Ed25519    | SUCCESS |
++---------+--------------------------------------+---------+
+| DIAG-06 | encryption key curve must be Cv25519 | SUCCESS |
++---------+--------------------------------------+---------+
+```
+
 ## Installation
 
 Install the OpenPGP-DID CLI by cloning the repository and using cargo:
