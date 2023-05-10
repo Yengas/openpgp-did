@@ -163,24 +163,34 @@ impl SmartCard for OpenPgpSmartCard {
         let application_identifier = application_related_data.application_id()?.to_string();
 
         let firmware_version = convert_firmware_version_to_string(transaction.firmware_version()?);
-        let signing_counter = transaction.security_support_template()?.signature_count();
+        let signing_counter = transaction
+            .security_support_template()
+            .map_or(0, |sst| sst.signature_count());
 
         let fingerprints = application_related_data.fingerprints()?;
-        let signing_key = get_signing_key(
-            &mut transaction,
-            fingerprints.signature().unwrap().to_string(),
-        )?;
-        let encryption_key = get_encryption_key(
-            &mut transaction,
-            fingerprints.decryption().unwrap().to_string(),
-        )?;
 
-        return Ok(SmartCardInfo {
+        let mut keys: Vec<Key> = Vec::new();
+
+        if let Some(signature_fingerprint) = fingerprints.signature() {
+            keys.push(
+                get_signing_key(&mut transaction, signature_fingerprint.to_string())
+                    .map(Key::Signing)?,
+            );
+        }
+
+        if let Some(encryption_fingerprint) = fingerprints.decryption() {
+            keys.push(
+                get_encryption_key(&mut transaction, encryption_fingerprint.to_string())
+                    .map(Key::Encryption)?,
+            );
+        }
+
+        Ok(SmartCardInfo {
             application_identifier,
             firmware_version,
             signing_counter,
-            keys: vec![Key::Signing(signing_key), Key::Encryption(encryption_key)],
-        });
+            keys,
+        })
     }
 
     fn sign_data(&mut self, key: &SigningKey, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
