@@ -1,7 +1,11 @@
 use std::error::Error;
 
 use chrono::Timelike;
-use ssi::vc::{Credential, Issuer, URI, VCDateTime};
+use did_web::DIDWeb;
+use ssi::{
+    jsonld::ContextLoader,
+    vc::{Credential, Issuer, URI, VCDateTime},
+};
 
 use super::utils::{create_did, read_file_by_path};
 
@@ -29,4 +33,19 @@ pub async fn cmd_ssi_sign_credential(file_path: Option<&str>) -> Result<(), Box<
     println!("{}", serde_json::to_string_pretty(&signed_credential)?);
 
     Ok(())
+}
+
+pub async fn cmd_ssi_verify_credential(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
+    let credential = read_unsigned_credential_by_path(file_path).await?;
+    let verification_result = credential
+        .verify(None, &DIDWeb, &mut ContextLoader::default())
+        .await;
+
+    println!("{}", serde_json::to_string_pretty(&verification_result)?);
+
+    if verification_result.errors.is_empty() {
+        Ok(())
+    } else {
+        Err("credential verification failed".into())
+    }
 }

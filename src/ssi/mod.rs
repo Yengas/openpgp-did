@@ -11,7 +11,7 @@ use ssi::{
     jsonld::ContextLoader,
     jwk::{Base64urlUInt, JWK, OctetParams, Params},
     ldp::{ProofSuite, ProofSuiteType, SigningInput},
-    vc::{Credential, Issuer, LinkedDataProofOptions, URI, VCDateTime},
+    vc::{Credential, LinkedDataProofOptions, URI},
 };
 
 use crate::crypto::{
@@ -270,6 +270,7 @@ impl Did {
 mod tests {
     use super::*;
     use crate::crypto::key::{SigningKey, SigningKeyCurve};
+    use ssi::vc::{Issuer, VCDateTime};
 
     #[tokio::test]
     async fn sample_credential_can_prepare_json_web_signature_proof() {

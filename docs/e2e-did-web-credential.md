@@ -131,9 +131,17 @@ The output should include a `proof` object with:
 - `verificationMethod`: a DID URL under your `did:web:...` DID
 - `jws`: the detached JWS signature created by the OpenPGP card
 
-## 7. Verify With An Independent Verifier
+## 7. Verify The Credential
 
-Use the public [POSSIBLE-X Verifier](https://possible.fokus.fraunhofer.de/verifier/): paste the contents of `signed-credential.json` into the form and select **Validate**. It uses Gaia-X AISBL's independent [JsonWebSignature2020 TypeScript library](https://gitlab.com/gaia-x/lab/libraries/json-web-signature-2020), so it is a useful interoperability check outside this Rust codebase.
+First, verify the credential against the published `did:web` document:
+
+```bash
+openpgp-did ssi verify-credential --file signed-credential.json
+```
+
+The command prints a verification result and exits successfully only when its `errors` array is empty.
+
+The public [POSSIBLE-X Verifier](https://possible.fokus.fraunhofer.de/verifier/) is an optional external interoperability experiment. It uses Gaia-X AISBL's independent [JsonWebSignature2020 TypeScript library](https://gitlab.com/gaia-x/lab/libraries/json-web-signature-2020), but it is aimed at Gaia-X Compliance Credentials and may reject generic VC 1.x credentials. Do not treat its result as the primary validation of this project until a successful cross-verification is established.
 
 The verifier fetches your `did:web` document from the public internet. Only submit test credentials or credentials you are comfortable sharing with that third-party service.
 
