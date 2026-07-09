@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use chrono::Timelike;
-use ssi::vc::{Credential, Issuer, VCDateTime, URI};
+use ssi::vc::{Credential, Issuer, URI, VCDateTime};
 
 use super::utils::{create_did, read_file_by_path};
 

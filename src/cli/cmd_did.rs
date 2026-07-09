@@ -1,9 +1,9 @@
 use std::{
     error::Error,
-    io::{stdin, stdout, Write},
+    io::{Write, stdin, stdout},
 };
 
-use ssi::did::{PrimaryDIDURL, DIDURL};
+use ssi::did::{DIDURL, PrimaryDIDURL};
 
 use crate::{
     crypto::{key::Key, smart_card::SmartCard},

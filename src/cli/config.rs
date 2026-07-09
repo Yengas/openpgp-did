@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ssi::did::{PrimaryDIDURL, DIDURL};
+use ssi::did::{DIDURL, PrimaryDIDURL};
 use std::error::Error;
 use std::path::PathBuf;
 use tokio::{

@@ -1,15 +1,15 @@
 use std::error::Error;
 
-use base64::{engine, Engine};
+use base64::{Engine, engine};
 use did_web::DIDWeb;
 use iref::Iri;
 use ssi::{
     did::{
-        Context, Contexts, Document, VerificationMethod, VerificationMethodMap, DEFAULT_CONTEXT,
-        DIDURL,
+        Context, Contexts, DEFAULT_CONTEXT, DIDURL, Document, VerificationMethod,
+        VerificationMethodMap,
     },
     jsonld::ContextLoader,
-    jwk::{Base64urlUInt, OctetParams, Params, JWK},
+    jwk::{Base64urlUInt, JWK, OctetParams, Params},
     ldp::{ProofSuite, ProofSuiteType, SigningInput},
     vc::{Credential, LinkedDataProofOptions, URI},
 };
