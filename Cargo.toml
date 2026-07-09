@@ -1,25 +1,26 @@
 [package]
 name = "openpgp-did"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.96.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base64 = "0.21.0"
-chrono = "0.4.24"
-clap = "4.2.7"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+clap = "4.6.1"
 did-web = "0.2.1"
-dirs = "5.0.1"
+dirs = "6.0.0"
 iref = "2.2.3"
 openpgp-card = "0.3.5"
 openpgp-card-pcsc = "0.3.1"
 pinentry = "0.5.0"
 prettytable-rs = "0.10.0"
 secrecy = "0.8.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.96"
-serde_yaml = "0.9.21"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+serde_yaml = "0.9.34"
 ssi = "0.6.0"
-tokio = { version = "1.28.0", features = ["full"] }
-which = "4.4.0"
+tokio = { version = "1.52.3", features = ["fs", "io-std", "io-util", "macros", "rt-multi-thread"] }
+which = "8.0.4"
