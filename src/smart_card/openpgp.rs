@@ -1,6 +1,5 @@
 use std::error::Error;
 
-use card_backend_pcsc::PcscBackend;
 use openpgp_card::{
     Card,
     ocard::{
@@ -18,6 +17,7 @@ use crate::crypto::{
     key::{EncryptionKey, EncryptionKeyCurve, Key, SigningKey, SigningKeyCurve},
     smart_card::{SmartCard, SmartCardInfo},
 };
+use crate::smart_card::pcsc::exactly_one_card;
 
 pub struct OpenPgpSmartCard {
     openpgp: Card<Open>,
@@ -43,24 +43,9 @@ fn get_passphrase(dsc: u32) -> SecretString {
     }
 }
 
-fn get_card_backend() -> Result<PcscBackend, Box<dyn Error>> {
-    let backends = PcscBackend::cards(None)?;
-    let mut backends = backends.collect::<Result<Vec<_>, _>>()?;
-
-    if backends.len() == 1 {
-        return Ok(backends.remove(0));
-    }
-
-    return Err(format!(
-        "expected exactly one backend to be listed but got = {}",
-        backends.len()
-    )
-    .into());
-}
-
 impl OpenPgpSmartCard {
     pub fn try_new() -> Result<Self, Box<dyn Error>> {
-        let backend = get_card_backend().map_err(|err| -> Box<dyn Error> {
+        let backend = exactly_one_card().map_err(|err| -> Box<dyn Error> {
             format!("got some error when listing the cards: {:?}", err).into()
         })?;
 
