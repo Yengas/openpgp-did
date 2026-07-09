@@ -82,6 +82,8 @@ openpgp-did did help
 openpgp-did ssi help
 ```
 
+For a complete setup and verification walkthrough, see [docs/e2e-did-web-credential.md](./docs/e2e-did-web-credential.md).
+
 ## Known Issues
 
 If card access gets stuck, restart GnuPG's card services and retry:
