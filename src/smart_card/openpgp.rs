@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use openpgp_card::{
+    OpenPgp, OpenPgpTransaction,
     algorithm::{Algo, Curve},
     card_do::Fingerprint,
     crypto_data::PublicKeyMaterial,
-    OpenPgp, OpenPgpTransaction,
 };
 use openpgp_card_pcsc::PcscBackend;
 use pinentry::PassphraseInput;
@@ -63,7 +63,7 @@ impl OpenPgpSmartCard {
         Ok(Self { openpgp })
     }
 
-    fn transaction(&mut self) -> Result<OpenPgpTransaction, Box<dyn Error>> {
+    fn transaction(&mut self) -> Result<OpenPgpTransaction<'_>, Box<dyn Error>> {
         self.openpgp
             .transaction()
             .map_err(|err| format!("could not create transaction: {}", err).into())
