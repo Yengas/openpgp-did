@@ -11,7 +11,7 @@ use ssi::{
     jsonld::ContextLoader,
     jwk::{Base64urlUInt, JWK, OctetParams, Params},
     ldp::{ProofSuite, ProofSuiteType, SigningInput},
-    vc::{Credential, LinkedDataProofOptions, URI},
+    vc::{Credential, Issuer, LinkedDataProofOptions, URI, VCDateTime},
 };
 
 use crate::crypto::{
@@ -239,27 +239,74 @@ impl Did {
                 None,
             )
             .await
-            .expect("could not prepare the proof");
+            .map_err(|error| {
+                format!(
+                    "could not prepare the JSON-LD proof; define every custom credential type and claim in @context: {error}"
+                )
+            })?;
 
         let bytes_to_sign = match &proof_preparation.signing_input {
-            SigningInput::Bytes(base64_url_uint) => Some(base64_url_uint.0.clone()),
-            _ => None,
-        }
-        .expect("no bytes to sign");
+            SigningInput::Bytes(base64_url_uint) => base64_url_uint.0.clone(),
+            _ => return Err("proof suite did not produce byte input for signing".into()),
+        };
 
         let signature_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(
             self.smart_card
-                .sign_data(&self.active_signing_key, bytes_to_sign)
-                .expect("could not sign"),
+                .sign_data(&self.active_signing_key, bytes_to_sign)?,
         );
 
         let proof = proof_suite
             .complete(&proof_preparation, &signature_base64)
             .await
-            .expect("could not complete proof preparation");
+            .map_err(|error| format!("could not complete the JSON-LD proof: {error}"))?;
 
         signed_credential.add_proof(proof);
 
         Ok(signed_credential)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::key::{SigningKey, SigningKeyCurve};
+
+    #[tokio::test]
+    async fn sample_credential_can_prepare_json_web_signature_proof() {
+        let mut credential: Credential =
+            serde_json::from_str(include_str!("../../examples/unsigned-credential.json"))
+                .expect("sample credential must parse");
+        credential.issuer = Some(Issuer::URI(URI::String("did:web:example.com".to_owned())));
+        credential.issuance_date = Some(VCDateTime::from(chrono::Utc::now()));
+
+        let did_url: DIDURL = DIDURL::try_from("did:web:example.com".to_owned())
+            .expect("test DID must parse")
+            .into();
+        let key = Key::Signing(SigningKey::new(
+            "test-signing-key".to_owned(),
+            SigningKeyCurve::Ed25519,
+            vec![0; 32],
+        ));
+        let jwk = create_jwk(&did_url, &key);
+        let proof_suite: Box<dyn ProofSuite> = Box::new(ProofSuiteType::JsonWebSignature2020);
+
+        if let Err(error) = proof_suite
+            .prepare(
+                &credential,
+                &LinkedDataProofOptions {
+                    verification_method: Some(URI::String(
+                        jwk.key_id.clone().expect("test JWK must have a key ID"),
+                    )),
+                    ..LinkedDataProofOptions::default()
+                },
+                &DIDWeb,
+                &mut ContextLoader::default(),
+                &jwk,
+                None,
+            )
+            .await
+        {
+            panic!("sample credential must prepare a JSON-LD proof: {error}");
+        }
     }
 }

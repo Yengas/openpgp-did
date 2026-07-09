@@ -112,6 +112,7 @@ The returned JSON should contain:
 ## 6. Sign A Sample Credential
 
 This repository includes a minimal unsigned credential at `examples/unsigned-credential.json`.
+It defines its example-specific type and claim in an inline JSON-LD context. Add equivalent context definitions whenever you add custom credential types or claims.
 
 Sign it with the card:
 
