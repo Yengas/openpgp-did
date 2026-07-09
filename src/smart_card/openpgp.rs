@@ -1,14 +1,18 @@
 use std::error::Error;
 
+use card_backend_pcsc::PcscBackend;
 use openpgp_card::{
-    OpenPgp, OpenPgpTransaction,
-    algorithm::{Algo, Curve},
-    card_do::Fingerprint,
-    crypto_data::PublicKeyMaterial,
+    Card,
+    ocard::{
+        KeyType,
+        algorithm::{AlgorithmAttributes, Curve},
+        crypto::PublicKeyMaterial,
+        data::Fingerprint,
+    },
+    state::{Open, Transaction},
 };
-use openpgp_card_pcsc::PcscBackend;
 use pinentry::PassphraseInput;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::SecretString;
 
 use crate::crypto::{
     key::{EncryptionKey, EncryptionKeyCurve, Key, SigningKey, SigningKeyCurve},
@@ -16,10 +20,10 @@ use crate::crypto::{
 };
 
 pub struct OpenPgpSmartCard {
-    openpgp: OpenPgp,
+    openpgp: Card<Open>,
 }
 
-fn get_passphrase(dsc: u32) -> Secret<String> {
+fn get_passphrase(dsc: u32) -> SecretString {
     let binary = which::which("pinentry").expect("`pinentry` not installed");
     let mut input = PassphraseInput::with_binary(binary).expect("could not initialize pinentry");
 
@@ -40,7 +44,9 @@ fn get_passphrase(dsc: u32) -> Secret<String> {
 }
 
 fn get_card_backend() -> Result<PcscBackend, Box<dyn Error>> {
-    let mut backends = PcscBackend::cards(None)?;
+    let backends = PcscBackend::cards(None)?;
+    let mut backends = backends.collect::<Result<Vec<_>, _>>()?;
+
     if backends.len() == 1 {
         return Ok(backends.remove(0));
     }
@@ -58,12 +64,12 @@ impl OpenPgpSmartCard {
             format!("got some error when listing the cards: {:?}", err).into()
         })?;
 
-        let openpgp = OpenPgp::new(backend);
+        let openpgp = Card::<Open>::new(backend)?;
 
         Ok(Self { openpgp })
     }
 
-    fn transaction(&mut self) -> Result<OpenPgpTransaction<'_>, Box<dyn Error>> {
+    fn transaction(&mut self) -> Result<Card<Transaction<'_>>, Box<dyn Error>> {
         self.openpgp
             .transaction()
             .map_err(|err| format!("could not create transaction: {}", err).into())
@@ -71,40 +77,35 @@ impl OpenPgpSmartCard {
 
     fn get_signing_counter(&mut self) -> Result<u32, Box<dyn Error>> {
         let mut transaction = self.openpgp.transaction()?;
-        let template = transaction.security_support_template()?;
 
-        Ok(template.signature_count())
+        Ok(transaction.digital_signature_count()?)
     }
 
     fn get_signing_key_fingerprint(&mut self) -> Result<Fingerprint, Box<dyn Error>> {
-        let fingerprints = self
-            .transaction()?
-            .application_related_data()?
-            .fingerprints()?;
-
-        fingerprints
-            .signature()
-            .map(|f| f.clone())
+        self.transaction()?
+            .fingerprint(KeyType::Signing)?
             .ok_or("there is no signing key".into())
     }
 }
 
 fn get_signing_key(
-    transaction: &mut OpenPgpTransaction,
+    transaction: &mut Card<Transaction<'_>>,
     fingerprint: String,
 ) -> Result<SigningKey, Box<dyn Error>> {
     let public_key = transaction
-        .public_key(openpgp_card::KeyType::Signing)
+        .public_key_material(KeyType::Signing)
         .expect("could not get signing key");
 
     match public_key {
         PublicKeyMaterial::E(ecc_pub) => match ecc_pub.algo() {
-            Algo::Ecc(attrs) if attrs.curve() == Curve::Ed25519 => Ok(SigningKey::new(
-                fingerprint,
-                SigningKeyCurve::Ed25519,
-                ecc_pub.data().to_vec(),
-            )),
-            Algo::Ecc(attrs) => Err(format!(
+            AlgorithmAttributes::Ecc(attrs) if attrs.curve() == &Curve::Ed25519 => {
+                Ok(SigningKey::new(
+                    fingerprint,
+                    SigningKeyCurve::Ed25519,
+                    ecc_pub.data().to_vec(),
+                ))
+            }
+            AlgorithmAttributes::Ecc(attrs) => Err(format!(
                 "expected signing key curve to be {:?} but it was {:?}",
                 SigningKeyCurve::Ed25519,
                 attrs.curve()
@@ -119,21 +120,23 @@ fn get_signing_key(
 }
 
 fn get_encryption_key(
-    transaction: &mut OpenPgpTransaction,
+    transaction: &mut Card<Transaction<'_>>,
     fingerprint: String,
 ) -> Result<EncryptionKey, Box<dyn Error>> {
     let public_key = transaction
-        .public_key(openpgp_card::KeyType::Decryption)
+        .public_key_material(KeyType::Decryption)
         .expect("could not get encryption key");
 
     match public_key {
         PublicKeyMaterial::E(ecc_pub) => match ecc_pub.algo() {
-            Algo::Ecc(attrs) if attrs.curve() == Curve::Cv25519 => Ok(EncryptionKey::new(
-                fingerprint,
-                EncryptionKeyCurve::Cv25519,
-                ecc_pub.data().to_vec(),
-            )),
-            Algo::Ecc(attrs) => Err(format!(
+            AlgorithmAttributes::Ecc(attrs) if attrs.curve() == &Curve::Curve25519 => {
+                Ok(EncryptionKey::new(
+                    fingerprint,
+                    EncryptionKeyCurve::Cv25519,
+                    ecc_pub.data().to_vec(),
+                ))
+            }
+            AlgorithmAttributes::Ecc(attrs) => Err(format!(
                 "expected encryption key curve to be {:?} but it was {:?}",
                 EncryptionKeyCurve::Cv25519,
                 attrs.curve()
@@ -159,15 +162,12 @@ impl SmartCard for OpenPgpSmartCard {
     fn get_card_info(&mut self) -> Result<SmartCardInfo, Box<dyn Error>> {
         let mut transaction = self.openpgp.transaction()?;
 
-        let application_related_data = transaction.application_related_data()?;
-        let application_identifier = application_related_data.application_id()?.to_string();
+        let application_identifier = transaction.application_identifier()?.to_string();
 
         let firmware_version = convert_firmware_version_to_string(transaction.firmware_version()?);
-        let signing_counter = transaction
-            .security_support_template()
-            .map_or(0, |sst| sst.signature_count());
+        let signing_counter = transaction.digital_signature_count().unwrap_or(0);
 
-        let fingerprints = application_related_data.fingerprints()?;
+        let fingerprints = transaction.fingerprints()?;
 
         let mut keys: Vec<Key> = Vec::new();
 
@@ -206,15 +206,8 @@ impl SmartCard for OpenPgpSmartCard {
         let passphrase = get_passphrase(signing_counter);
         let mut transaction = self.transaction()?;
 
-        assert!(
-            transaction
-                .verify_pw1_sign(passphrase.expose_secret().as_bytes())
-                .is_ok(),
-            "the pin was not accepted!"
-        );
+        transaction.verify_user_signing_pin(passphrase)?;
 
-        Ok(transaction
-            .pso_compute_digital_signature(data.clone())
-            .expect("could not sign the jwt"))
+        Ok(transaction.card().pso_compute_digital_signature(data)?)
     }
 }

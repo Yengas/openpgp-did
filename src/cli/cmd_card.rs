@@ -12,11 +12,12 @@ use crate::{
 };
 
 pub async fn cmd_card_info() -> Result<(), Box<dyn Error>> {
-    let mut smart_card = OpenPgpSmartCard::try_new().expect("could not initialize OpenPGP Card");
+    let mut smart_card = OpenPgpSmartCard::try_new()
+        .map_err(|err| format!("could not initialize OpenPGP Card: {err}"))?;
 
     let smart_card_info = smart_card
         .get_card_info()
-        .expect("could not get smart card info");
+        .map_err(|err| format!("could not get smart card info: {err}"))?;
 
     let mut general_info_table = Table::new();
 
