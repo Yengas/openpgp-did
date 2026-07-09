@@ -132,14 +132,18 @@ The output should include a `proof` object with:
 
 ## 7. Verify With An Independent Verifier
 
-Use a verifier that supports:
+Use the public [POSSIBLE-X Verifier](https://possible.fokus.fraunhofer.de/verifier/): paste the contents of `signed-credential.json` into the form and select **Validate**. It uses Gaia-X AISBL's independent [JsonWebSignature2020 TypeScript library](https://gitlab.com/gaia-x/lab/libraries/json-web-signature-2020), so it is a useful interoperability check outside this Rust codebase.
+
+The verifier fetches your `did:web` document from the public internet. Only submit test credentials or credentials you are comfortable sharing with that third-party service.
+
+The verifier needs support for:
 
 - `did:web` resolution over HTTPS.
 - `JsonWebKey2020`.
 - `JsonWebSignature2020`.
 - Ed25519 / `EdDSA` detached JWS verification.
 
-Point the verifier at `signed-credential.json`. The verifier must be able to fetch your published DID document over HTTPS. A successful verification should confirm that the proof signature matches the Ed25519 public key in your DID document.
+This proof format is from the VC 1.x ecosystem; some newer VC tooling focuses only on Data Integrity proofs, so it will not verify this credential. A successful result confirms that the proof signature matches the Ed25519 public key in your published DID document.
 
 If verification fails:
 
