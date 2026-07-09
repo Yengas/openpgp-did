@@ -17,7 +17,7 @@ use crate::crypto::{
     key::{EncryptionKey, EncryptionKeyCurve, Key, SigningKey, SigningKeyCurve},
     smart_card::{SmartCard, SmartCardInfo},
 };
-use crate::smart_card::pcsc::exactly_one_card;
+use crate::smart_card::scdaemon::ScdaemonBackend;
 
 pub struct OpenPgpSmartCard {
     openpgp: Card<Open>,
@@ -45,8 +45,8 @@ fn get_passphrase(dsc: u32) -> SecretString {
 
 impl OpenPgpSmartCard {
     pub fn try_new() -> Result<Self, Box<dyn Error>> {
-        let backend = exactly_one_card().map_err(|err| -> Box<dyn Error> {
-            format!("got some error when listing the cards: {:?}", err).into()
+        let backend = ScdaemonBackend::try_new().map_err(|err| -> Box<dyn Error> {
+            format!("could not initialize scdaemon card backend: {err}").into()
         })?;
 
         let openpgp = Card::<Open>::new(backend)?;

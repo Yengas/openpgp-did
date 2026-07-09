@@ -2455,7 +2455,6 @@ dependencies = [
  "dirs",
  "iref",
  "openpgp-card",
- "pcsc",
  "pinentry",
  "prettytable-rs",
  "secrecy",
@@ -2565,25 +2564,6 @@ dependencies = [
  "redox_syscall 0.2.16",
  "smallvec",
  "windows-sys 0.45.0",
-]
-
-[[package]]
-name = "pcsc"
-version = "2.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37cab0be9d04e808a8d8059fa54befcd71dc8b168f9f0c04bdb7e59832abbab4"
-dependencies = [
- "bitflags",
- "pcsc-sys",
-]
-
-[[package]]
-name = "pcsc-sys"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1b7bfecba2c0f1b5efb0e7caf7533ab1c295024165bcbb066231f60d33e23ea"
-dependencies = [
- "pkg-config",
 ]
 
 [[package]]

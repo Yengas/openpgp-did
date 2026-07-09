@@ -1,2 +1,2 @@
 pub mod openpgp;
-mod pcsc;
+mod scdaemon;
