@@ -8,7 +8,7 @@ This guide exercises the full flow:
 4. Sign a sample Verifiable Credential with the card.
 5. Verify the result with an independent verifier.
 
-The commands below use `cargo run --locked -- ...` so you can test a local branch without installing the binary system-wide.
+The commands below build and install the CLI from your current checkout, then use the installed `openpgp-did` command. This is closer to normal use and also verifies that your shell `PATH`, GnuPG, scdaemon, and pinentry setup work together.
 
 ## 1. Install Runtime Dependencies
 
@@ -40,9 +40,24 @@ If GnuPG cannot see the card, fix that first. `openpgp-did` sends card APDUs thr
 
 ## 3. Build And Run Card Diagnostics
 
+Build and install the CLI from this checkout:
+
 ```bash
-cargo run --locked -- card diagnostic
-cargo run --locked -- card info
+cargo build --locked
+cargo install --locked --path .
+```
+
+Make sure your shell can find the installed command:
+
+```bash
+openpgp-did help
+```
+
+Then run the card diagnostics:
+
+```bash
+openpgp-did card diagnostic
+openpgp-did card info
 ```
 
 The diagnostic command should report `SUCCESS` for all checks.
@@ -57,7 +72,7 @@ Choose the HTTPS domain that will host your DID document. For example:
 Initialize local configuration:
 
 ```bash
-cargo run --locked -- did init
+openpgp-did did init
 ```
 
 When prompted, enter your DID, for example:
@@ -73,7 +88,7 @@ The command writes `~/.openpgp-did/did-configuration.yml` with the DID and the c
 Generate the DID document:
 
 ```bash
-cargo run --locked -- did document > did.json
+openpgp-did did document > did.json
 ```
 
 Publish `did.json` at:
@@ -101,7 +116,7 @@ This repository includes a minimal unsigned credential at `examples/unsigned-cre
 Sign it with the card:
 
 ```bash
-cargo run --locked -- ssi sign-credential \
+openpgp-did ssi sign-credential \
   --file examples/unsigned-credential.json \
   > signed-credential.json
 ```
@@ -131,7 +146,7 @@ If verification fails:
 - Confirm `curl -fsSL https://example.com/.well-known/did.json` returns the current DID document.
 - Confirm the `proof.verificationMethod` in `signed-credential.json` exists in the DID document.
 - Confirm your verifier supports `JsonWebSignature2020`; some newer VC tooling focuses on Data Integrity proofs instead.
-- Re-run `cargo run --locked -- did document` and compare it with the hosted document.
+- Re-run `openpgp-did did document` and compare it with the hosted document.
 
 ## PIN Caching Notes
 
