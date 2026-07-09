@@ -2,6 +2,11 @@ use std::{error::Error, process::Command};
 
 use card_backend::{CardBackend, CardCaps, CardTransaction, PinType, SmartcardError};
 
+/// Card backend that routes OpenPGP-card APDUs through GnuPG's scdaemon.
+///
+/// GnuPG already coordinates card access for git commit signing and other
+/// OpenPGP workflows. Talking to scdaemon lets this CLI share that daemon
+/// instead of opening the YubiKey over PC/SC directly and competing with it.
 pub struct ScdaemonBackend;
 
 pub struct ScdaemonTransaction;
@@ -101,6 +106,9 @@ impl From<ScdaemonBackend> for Box<dyn CardBackend + Sync + Send> {
 }
 
 fn transmit_apdu(cmd: &[u8]) -> Result<Vec<u8>, SmartcardError> {
+    // openpgp-card may emit extended-length APDUs, for example reads with a
+    // three-byte Le. scdaemon rejects those unless its APDU command is told to
+    // enable extended length handling.
     let apdu_command = format!("SCD APDU --exlen {}", encode_hex(cmd));
     let output =
         run_gpg_connect_agent(["--hex", apdu_command.as_str(), "/bye"]).map_err(|err| {
@@ -110,6 +118,9 @@ fn transmit_apdu(cmd: &[u8]) -> Result<Vec<u8>, SmartcardError> {
             ))
         })?;
 
+    // --hex gives us a stable ASCII dump, but Assuan still escapes bytes like
+    // newline as %0A inside the data stream. Decode those escapes after reading
+    // the hexdump so the card response is byte-for-byte what openpgp-card expects.
     parse_hex_dump_data_lines(&output)
         .and_then(|bytes| percent_decode(&bytes))
         .map_err(|err| {
