@@ -4,6 +4,12 @@
 
 Card commands use GnuPG's `scdaemon` rather than opening the card directly. This lets the CLI coexist with normal GnuPG uses such as Git commit signing.
 
+## Features
+
+- OpenPGP smart-card communication through [openpgp-card](https://crates.io/crates/openpgp-card) and GnuPG's `scdaemon`.
+- `did:web` document creation from the card's Ed25519 signing key and Cv25519 encryption key.
+- Verifiable Credential signing with the [SpruceID SSI library](https://github.com/spruceid/ssi).
+
 ## Requirements
 
 - Rust and Cargo to build the CLI.
