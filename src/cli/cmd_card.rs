@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use base64::{engine, Engine};
+use base64::{Engine, engine};
 use prettytable::{Cell, Row, Table};
 
 use crate::{
@@ -12,11 +12,12 @@ use crate::{
 };
 
 pub async fn cmd_card_info() -> Result<(), Box<dyn Error>> {
-    let mut smart_card = OpenPgpSmartCard::try_new().expect("could not initialize OpenPGP Card");
+    let mut smart_card = OpenPgpSmartCard::try_new()
+        .map_err(|err| format!("could not initialize OpenPGP Card: {err}"))?;
 
     let smart_card_info = smart_card
         .get_card_info()
-        .expect("could not get smart card info");
+        .map_err(|err| format!("could not get smart card info: {err}"))?;
 
     let mut general_info_table = Table::new();
 
@@ -69,8 +70,8 @@ pub async fn cmd_card_info() -> Result<(), Box<dyn Error>> {
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum DiagnosticCheckResult {
-    Success(),
-    Failed(),
+    Success,
+    Failed,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -83,36 +84,34 @@ struct DiagnosticCheck {
 fn check_encryption_key_existence(
     opt_encryption_key: Option<&EncryptionKey>,
 ) -> DiagnosticCheckResult {
-    match opt_encryption_key {
-        Some(_) => DiagnosticCheckResult::Success(),
-        _ => DiagnosticCheckResult::Failed(),
+    if opt_encryption_key.is_some() {
+        DiagnosticCheckResult::Success
+    } else {
+        DiagnosticCheckResult::Failed
     }
 }
 
 fn check_encryption_key_curve(opt_encryption_key: Option<&EncryptionKey>) -> DiagnosticCheckResult {
-    match opt_encryption_key {
-        Some(encryption_key) => match encryption_key.curve() {
-            EncryptionKeyCurve::Cv25519 => DiagnosticCheckResult::Success(),
-            _ => DiagnosticCheckResult::Failed(),
-        },
-        _ => DiagnosticCheckResult::Failed(),
+    if opt_encryption_key.is_some_and(|key| key.curve() == &EncryptionKeyCurve::Cv25519) {
+        DiagnosticCheckResult::Success
+    } else {
+        DiagnosticCheckResult::Failed
     }
 }
 
 fn check_signing_key_existence(opt_signing_key: Option<&SigningKey>) -> DiagnosticCheckResult {
-    match opt_signing_key {
-        Some(_) => DiagnosticCheckResult::Success(),
-        _ => DiagnosticCheckResult::Failed(),
+    if opt_signing_key.is_some() {
+        DiagnosticCheckResult::Success
+    } else {
+        DiagnosticCheckResult::Failed
     }
 }
 
 fn check_signing_key_curve(opt_signing_key: Option<&SigningKey>) -> DiagnosticCheckResult {
-    match opt_signing_key {
-        Some(signing_key) => match signing_key.curve() {
-            SigningKeyCurve::Ed25519 => DiagnosticCheckResult::Success(),
-            _ => DiagnosticCheckResult::Failed(),
-        },
-        _ => DiagnosticCheckResult::Failed(),
+    if opt_signing_key.is_some_and(|key| key.curve() == &SigningKeyCurve::Ed25519) {
+        DiagnosticCheckResult::Success
+    } else {
+        DiagnosticCheckResult::Failed
     }
 }
 
@@ -126,8 +125,8 @@ fn do_card_diagnostics_checks() -> Vec<DiagnosticCheck> {
         description: "card connection must be successful".into(),
         check_result: smart_card
             .as_ref()
-            .map_or(DiagnosticCheckResult::Failed(), |_| {
-                DiagnosticCheckResult::Success()
+            .map_or(DiagnosticCheckResult::Failed, |_| {
+                DiagnosticCheckResult::Success
             }),
     });
 
@@ -138,8 +137,8 @@ fn do_card_diagnostics_checks() -> Vec<DiagnosticCheck> {
         description: "card information must be read".into(),
         check_result: smart_card_info
             .as_ref()
-            .map_or(DiagnosticCheckResult::Failed(), |_| {
-                DiagnosticCheckResult::Success()
+            .map_or(DiagnosticCheckResult::Failed, |_| {
+                DiagnosticCheckResult::Success
             }),
     });
 
@@ -186,6 +185,9 @@ fn do_card_diagnostics_checks() -> Vec<DiagnosticCheck> {
 
 pub async fn cmd_card_diagnostic() -> Result<(), Box<dyn Error>> {
     let card_diagnostic_checks = do_card_diagnostics_checks();
+    let all_checks_passed = card_diagnostic_checks
+        .iter()
+        .all(|check| check.check_result == DiagnosticCheckResult::Success);
     let mut table = Table::new();
 
     table.add_row(Row::new(vec![
@@ -199,13 +201,17 @@ pub async fn cmd_card_diagnostic() -> Result<(), Box<dyn Error>> {
             Cell::new(diagnostic_check.code.as_str()),
             Cell::new(diagnostic_check.description.as_str()),
             Cell::new(match diagnostic_check.check_result {
-                DiagnosticCheckResult::Success() => "SUCCESS",
-                DiagnosticCheckResult::Failed() => "FAILED",
+                DiagnosticCheckResult::Success => "SUCCESS",
+                DiagnosticCheckResult::Failed => "FAILED",
             }),
         ]));
     }
 
     table.printstd();
 
-    Ok(())
+    if all_checks_passed {
+        Ok(())
+    } else {
+        Err("one or more card diagnostic checks failed".into())
+    }
 }

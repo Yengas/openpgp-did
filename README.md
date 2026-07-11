@@ -1,76 +1,83 @@
 # OpenPGP-DID CLI
 
-The OpenPGP-DID project provides a command-line interface (CLI) that uses your Smart Card Hardware OpenPGP applet to perform DID (Decentralized Identifiers) / SSI (Self-sovereign Identity) related operations using your existing signing / encryption keys for OpenPGP.
+`openpgp-did` creates `did:web` documents and signs Verifiable Credentials with the Ed25519 signing key on an OpenPGP smart card.
+
+Card commands use one locked GnuPG `scdaemon` session per operation so they coordinate safely with normal GnuPG uses such as Git commit signing. The [design notes](./docs/design.md) explain this and the verifier's security boundaries.
 
 ## Features
 
-- Cross-platform communication with your smart card using [openpgp-card](https://crates.io/crates/openpgp-card) crate and [pcsc](https://crates.io/crates/openpgp-card-pcsc).
-- SSI sign operation using your OpenPGP applet smart card. Made possible by [SpruceID SSI Library](https://github.com/spruceid/ssi).
-- Creation of DID documents. E.g. [did:web:yigitcan.dev](https://yigitcan.dev/.well-known/did.json)
+- OpenPGP smart-card communication through [openpgp-card](https://crates.io/crates/openpgp-card) and GnuPG's `scdaemon`.
+- `did:web` document creation from the card's Ed25519 signing key and Cv25519 encryption key.
+- Verifiable Credential signing with the [SpruceID SSI library](https://github.com/spruceid/ssi).
 
-## Pre-requisites
+## Requirements
 
-Before using this CLI, you need to initiate signing and encryption keys for your OpenPGP Applet. This operation is not orchestrated by this CLI, you need to follow other docs and videos to do this yourself. The keys you create must be Elliptic Curve keys e.g. Ed25519 and Cv25519.
+- Rust 1.88 or newer and Cargo to build the CLI. Installing Rust with
+  [rustup](https://rustup.rs/) is recommended.
+- GnuPG 2.4 or newer, including `gpg`, `gpg-agent`, `scdaemon`, `gpg-connect-agent`, and a configured `pinentry`. The CLI relies on GnuPG's multi-card `card_list` and exact-card selection support.
+- An OpenPGP card with an Ed25519 signing key and a Cv25519 encryption key.
+- Exactly one inserted OpenPGP card. The CLI enumerates cards and pins every transaction to that card's serial number.
 
-Check out [Youtube - How to set up Git commit signing with GPG and a YubiKey on macOS](https://www.youtube.com/watch?v=7LuMTyhFA-g) if you are on Mac and are using Yubikey.
+Confirm that GnuPG can see the card before using the CLI:
 
-You can ensure the initial setup is properly completed by running `openpgp-did card diagnostic`. You should see **SUCCESS** for all the diagnostic checks.
-
-```
-$ openpgp-did card diagnostic 
-
-+---------+--------------------------------------+---------+
-| Code    | Description                          | Result  |
-+---------+--------------------------------------+---------+
-| DIAG-01 | card connection must be successful   | SUCCESS |
-+---------+--------------------------------------+---------+
-| DIAG-02 | card information must be read        | SUCCESS |
-+---------+--------------------------------------+---------+
-| DIAG-03 | signing key must exist               | SUCCESS |
-+---------+--------------------------------------+---------+
-| DIAG-04 | encryption key must exist            | SUCCESS |
-+---------+--------------------------------------+---------+
-| DIAG-05 | signing key curve must be Ed25519    | SUCCESS |
-+---------+--------------------------------------+---------+
-| DIAG-06 | encryption key curve must be Cv25519 | SUCCESS |
-+---------+--------------------------------------+---------+
+```bash
+gpg --card-status
+gpg-connect-agent "SCD SERIALNO" /bye
+gpg-connect-agent "SCD GETINFO card_list" /bye
 ```
 
-## Installation
-
-Install the OpenPGP-DID CLI by cloning the repository and using cargo:
+## Install
 
 ```bash
 git clone https://github.com/Yengas/openpgp-did.git
 cd openpgp-did
-cargo build
-cargo install --path .
+cargo build --locked
+cargo install --locked --path .
 ```
+
+## Quick Check
+
+```bash
+openpgp-did card diagnostic
+openpgp-did card info
+```
+
+All diagnostic checks should report `SUCCESS`. The diagnostic command exits non-zero if any check fails.
 
 ## Usage
 
-To see the list of available commands, you can run:
-
 ```bash
 openpgp-did help
-```
-
-For detailed usage instructions of specific commands, refer to their respective help menus:
-
-```bash
 openpgp-did card help
 openpgp-did did help
 openpgp-did ssi help
 ```
 
-## Known Issues
+For platform setup, card-key preparation, `did:web` publishing, credential signing, local verification, and an optional independent interoperability check, follow the [end-to-end test guide](./docs/e2e-did-web-credential.md).
 
-Sometimes gpg agent keeps lock on the Smart Card. Run `gpgconf --kill gpg-agent` to kill the GPG agent.
+## Credential Verification
+
+`openpgp-did ssi verify-credential` fails closed. It checks credential structure, issuance and expiration times, issuer assertion authorization, applicable proofs until one succeeds, and supported credential status lists.
+
+Because credentials control the URLs being fetched, resolution is restricted to bounded requests to public HTTPS hosts. Private hosts, redirects, explicit ports, and proxy-only environments are unsupported. See the [design notes](./docs/design.md) for the rationale and tradeoffs.
+
+Dependency advisories are enforced in CI. See [Dependency Security](./docs/dependency-security.md) for the narrow, unreachable legacy SSI exceptions and their removal criteria.
+
+## Troubleshooting
+
+If card access becomes stuck, restart GnuPG's card services and retry:
+
+```bash
+gpgconf --kill scdaemon
+gpgconf --kill gpg-agent
+```
+
+If the CLI reports that the card is busy, let the other GnuPG operation finish and retry. GnuPG owns PIN entry through `pinentry`, so its normal PIN-cache behavior applies.
 
 ## Contributing
 
-Contributions to the OpenPGP-DID project are welcome! Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) for details on how to get started.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-This project is licensed under the MIT License.
+MIT.

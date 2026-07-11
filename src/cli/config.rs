@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ssi::did::{PrimaryDIDURL, DIDURL};
+use ssi::did::{DIDURL, PrimaryDIDURL};
 use std::error::Error;
 use std::path::PathBuf;
 use tokio::{
@@ -95,8 +95,5 @@ pub async fn read_did_configuration() -> Result<Option<DidConfiguration>, Box<dy
 }
 
 pub async fn does_valid_did_configuration_exist() -> bool {
-    match read_did_configuration().await {
-        Ok(Some(_)) => true,
-        _ => false,
-    }
+    matches!(read_did_configuration().await, Ok(Some(_)))
 }

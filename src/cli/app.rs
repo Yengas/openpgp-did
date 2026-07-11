@@ -50,6 +50,20 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                             .help("Sets the input file to use as the credential. Omit or use '-' for stdin."),
                         )
                         .about("Create proof and append it to an unsigned verifiable credential"),
+                )
+                .subcommand(
+                    clap::Command::new("verify-credential")
+                        .arg(
+                            Arg::new("file")
+                                .required(false)
+                                .short('f')
+                                .long("file")
+                                .value_name("FILE")
+                                .help("Sets the signed credential to verify. Omit or use '-' for stdin."),
+                        )
+                        .about(
+                            "Verify credential structure, validity, status, and proof using its published DID document",
+                        ),
                 ),
         );
 
@@ -69,6 +83,12 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         Some(("ssi", arg_matches)) => match arg_matches.subcommand() {
             Some(("sign-credential", args)) => {
                 cmd_ssi::cmd_ssi_sign_credential(
+                    args.get_one::<String>("file").map(|str| str.as_str()),
+                )
+                .await
+            }
+            Some(("verify-credential", args)) => {
+                cmd_ssi::cmd_ssi_verify_credential(
                     args.get_one::<String>("file").map(|str| str.as_str()),
                 )
                 .await

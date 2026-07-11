@@ -1,5 +1,5 @@
 use std::error::Error;
-use tokio::{fs::File, io::stdin, io::AsyncReadExt};
+use tokio::{fs::File, io::AsyncReadExt, io::stdin};
 
 use crate::{smart_card::openpgp::OpenPgpSmartCard, ssi::Did};
 

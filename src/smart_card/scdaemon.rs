@@ -1,0 +1,351 @@
+//! openpgp-card backend over GnuPG's scdaemon.
+//!
+//! Using scdaemon instead of opening the USB card directly lets this CLI share
+//! the card with Git and other GnuPG clients. Each card transaction owns one
+//! locked session, so exact-card selection, PIN verification, and signing
+//! cannot be interleaved. GnuPG owns PIN entry; direct PIN-bearing APDUs are
+//! rejected here. The child-process protocol is isolated in the agent module.
+
+mod agent;
+
+use std::{error::Error, fmt::Write as FmtWrite};
+
+use card_backend::{CardBackend, CardCaps, CardTransaction, PinType, SmartcardError};
+use secrecy::SecretString;
+
+use self::agent::GpgConnectAgent;
+
+const ASSUAN_MAX_SERIALIZED_APDU_BYTES: u16 = 480;
+// openpgp-card uses this value as a chained payload size even though CardCaps
+// defines it as a serialized APDU size. Reserve the worst-case extended APDU
+// header so the serialized command still fits the Assuan command line.
+const OPENPGP_CARD_MAX_COMMAND_BYTES: u16 = ASSUAN_MAX_SERIALIZED_APDU_BYTES - 9;
+const SCDAEMON_MAX_RESPONSE_BYTES: u16 = 4096;
+
+/// Card backend that routes OpenPGP-card APDUs through one locked scdaemon
+/// session for the lifetime of each card transaction.
+pub struct ScdaemonBackend {
+    serial_number: String,
+}
+
+pub struct ScdaemonTransaction {
+    session: GpgConnectAgent,
+    serial_number: String,
+    locked: bool,
+}
+
+impl ScdaemonBackend {
+    pub fn try_new() -> Result<Self, Box<dyn Error>> {
+        let mut session = GpgConnectAgent::spawn()?;
+        // Refresh scdaemon's view of inserted cards before asking for the
+        // complete list. A missing card is represented by an empty list below.
+        let _ = session.command("SCD SERIALNO");
+        let response = session.command("SCD GETINFO card_list")?;
+        let serial_numbers = parse_card_list(&response.status_lines)?;
+
+        // An ambiguous choice could silently sign with the wrong card.
+        let serial_number = match serial_numbers.as_slice() {
+            [serial_number] => serial_number.clone(),
+            [] => return Err("expected exactly one card in scdaemon but got 0".into()),
+            _ => {
+                return Err(format!(
+                    "expected exactly one card in scdaemon but got {} ({})",
+                    serial_numbers.len(),
+                    serial_numbers.join(", ")
+                )
+                .into());
+            }
+        };
+
+        select_card(&mut session, &serial_number)?;
+
+        Ok(Self { serial_number })
+    }
+}
+
+impl CardBackend for ScdaemonBackend {
+    fn limit_card_caps(&self, card_caps: CardCaps) -> CardCaps {
+        CardCaps::new(
+            card_caps.ext_support(),
+            card_caps.chaining_support(),
+            card_caps
+                .max_cmd_bytes()
+                .min(OPENPGP_CARD_MAX_COMMAND_BYTES),
+            card_caps.max_rsp_bytes().min(SCDAEMON_MAX_RESPONSE_BYTES),
+            card_caps.pw1_max_len(),
+            card_caps.pw3_max_len(),
+        )
+    }
+
+    fn transaction(
+        &mut self,
+        reselect_application: Option<&[u8]>,
+    ) -> Result<Box<dyn CardTransaction + Send + Sync + '_>, SmartcardError> {
+        // Card selection belongs to the Assuan session. Pin that selection,
+        // then lock it so PIN verification and signing cannot be interleaved.
+        let mut session = GpgConnectAgent::spawn().map_err(smartcard_error)?;
+        select_card(&mut session, &self.serial_number).map_err(smartcard_error)?;
+        session.command("SCD LOCK").map_err(|error| {
+            SmartcardError::Error(format!(
+                "could not lock the selected card; another GnuPG operation may be using it: {error}"
+            ))
+        })?;
+
+        let mut transaction = ScdaemonTransaction {
+            session,
+            serial_number: self.serial_number.clone(),
+            locked: true,
+        };
+
+        if let Some(application) = reselect_application {
+            let response = transaction.transmit(&select_application_command(application), 2)?;
+
+            if response.len() < 2 || response[response.len() - 2..] != [0x90, 0x00] {
+                return Err(SmartcardError::Error(format!(
+                    "failed to reselect OpenPGP application through scdaemon: {:x?}",
+                    response
+                )));
+            }
+        }
+
+        Ok(Box::new(transaction))
+    }
+}
+
+impl CardTransaction for ScdaemonTransaction {
+    fn transmit(&mut self, cmd: &[u8], buf_size: usize) -> Result<Vec<u8>, SmartcardError> {
+        if is_pin_bearing_verify(cmd) {
+            return Err(SmartcardError::Error(
+                "direct PIN-bearing VERIFY APDUs are disabled; use GnuPG-managed PIN verification"
+                    .into(),
+            ));
+        }
+
+        if cmd.len() > usize::from(ASSUAN_MAX_SERIALIZED_APDU_BYTES) {
+            return Err(SmartcardError::Error(format!(
+                "APDU is too large for scdaemon's Assuan transport: {} bytes (maximum {})",
+                cmd.len(),
+                ASSUAN_MAX_SERIALIZED_APDU_BYTES
+            )));
+        }
+
+        let response_limit = buf_size.clamp(2, usize::from(SCDAEMON_MAX_RESPONSE_BYTES));
+        let command = apdu_command(cmd, response_limit);
+        let response = self.session.secret_command(&command).map_err(|err| {
+            SmartcardError::Error(format!(
+                "scdaemon APDU transport failed for {}: {err}",
+                describe_apdu(cmd)
+            ))
+        })?;
+
+        if response.data.len() > response_limit + 2 {
+            return Err(SmartcardError::Error(format!(
+                "scdaemon APDU response exceeded the requested limit: {} bytes (maximum {})",
+                response.data.len(),
+                response_limit + 2
+            )));
+        }
+
+        Ok(response.data)
+    }
+
+    fn feature_pinpad_verify(&self) -> bool {
+        true
+    }
+
+    fn feature_pinpad_modify(&self) -> bool {
+        false
+    }
+
+    fn pinpad_verify(
+        &mut self,
+        pin: PinType,
+        _card_caps: &Option<CardCaps>,
+    ) -> Result<Vec<u8>, SmartcardError> {
+        // This trait hook verifies without accepting PIN bytes. Scdaemon maps
+        // it to GnuPG's pinentry even when the reader has no hardware PIN pad.
+        let identifier = checkpin_identifier(&self.serial_number, pin);
+        self.session
+            .command(&format!("SCD CHECKPIN {identifier}"))
+            .map_err(|error| {
+                SmartcardError::Error(format!("GnuPG-managed PIN verification failed: {error}"))
+            })?;
+
+        Ok(vec![0x90, 0x00])
+    }
+
+    fn pinpad_modify(
+        &mut self,
+        _pin: PinType,
+        _card_caps: &Option<CardCaps>,
+    ) -> Result<Vec<u8>, SmartcardError> {
+        Err(SmartcardError::Error(
+            "reader-side PIN modification is not supported through scdaemon".into(),
+        ))
+    }
+
+    fn was_reset(&self) -> bool {
+        false
+    }
+}
+
+impl Drop for ScdaemonTransaction {
+    fn drop(&mut self) {
+        if self.locked {
+            // Closing the Assuan connection releases SCD LOCK. Avoid a final
+            // blocking protocol round trip during error unwinding/shutdown.
+            self.session.close();
+            self.locked = false;
+        }
+    }
+}
+
+impl From<ScdaemonBackend> for Box<dyn CardBackend + Sync + Send> {
+    fn from(backend: ScdaemonBackend) -> Self {
+        Box::new(backend)
+    }
+}
+
+fn select_card(session: &mut GpgConnectAgent, serial_number: &str) -> Result<(), Box<dyn Error>> {
+    validate_serial_number(serial_number)?;
+    let response = session.command(&format!("SCD SERIALNO --demand={serial_number} openpgp"))?;
+    let selected_serial = response
+        .status_lines
+        .iter()
+        .find_map(|line| line.strip_prefix("SERIALNO "))
+        .ok_or("scdaemon did not report the selected card serial number")?;
+
+    if !selected_serial.eq_ignore_ascii_case(serial_number) {
+        return Err(
+            format!("scdaemon selected card {selected_serial}, expected {serial_number}").into(),
+        );
+    }
+
+    Ok(())
+}
+
+fn parse_card_list(status_lines: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut serial_numbers = Vec::new();
+
+    for serial_number in status_lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("SERIALNO "))
+    {
+        let serial_number = serial_number.trim();
+        if !serial_numbers
+            .iter()
+            .any(|known: &String| known.eq_ignore_ascii_case(serial_number))
+        {
+            validate_serial_number(serial_number)?;
+            serial_numbers.push(serial_number.to_owned());
+        }
+    }
+
+    Ok(serial_numbers)
+}
+
+fn validate_serial_number(serial_number: &str) -> Result<(), Box<dyn Error>> {
+    if serial_number.is_empty() || !serial_number.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid scdaemon card serial number: {serial_number:?}").into());
+    }
+
+    Ok(())
+}
+
+fn checkpin_identifier(serial_number: &str, pin: PinType) -> String {
+    match pin {
+        PinType::Sign | PinType::User => serial_number.to_owned(),
+        PinType::Admin => format!("{serial_number}[CHV3]"),
+    }
+}
+
+fn select_application_command(application: &[u8]) -> Vec<u8> {
+    let mut cmd = vec![0x00, 0xa4, 0x04, 0x00];
+    cmd.push(application.len() as u8);
+    cmd.extend_from_slice(application);
+    cmd.push(0x00);
+    cmd
+}
+
+fn apdu_command(cmd: &[u8], response_limit: usize) -> SecretString {
+    let mut command = String::with_capacity(25 + (cmd.len() * 2));
+    write!(&mut command, "SCD APDU --exlen={response_limit} ")
+        .expect("writing to a String cannot fail");
+
+    for byte in cmd {
+        write!(&mut command, "{byte:02X}").expect("writing to a String cannot fail");
+    }
+
+    command.into()
+}
+
+fn describe_apdu(cmd: &[u8]) -> String {
+    if cmd.len() < 4 {
+        return "malformed APDU".into();
+    }
+
+    if cmd[1] == 0x20 {
+        return format!(
+            "VERIFY APDU (cla={:02X}, p1={:02X}, p2={:02X}, data redacted)",
+            cmd[0], cmd[2], cmd[3]
+        );
+    }
+
+    format!(
+        "APDU header {:02X}{:02X}{:02X}{:02X}",
+        cmd[0], cmd[1], cmd[2], cmd[3]
+    )
+}
+
+fn is_pin_bearing_verify(cmd: &[u8]) -> bool {
+    cmd.len() > 5 && cmd.get(1) == Some(&0x20)
+}
+
+fn smartcard_error(error: impl std::fmt::Display) -> SmartcardError {
+    SmartcardError::Error(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        apdu_command, checkpin_identifier, describe_apdu, is_pin_bearing_verify, parse_card_list,
+    };
+    use card_backend::PinType;
+    use secrecy::ExposeSecret;
+
+    #[test]
+    fn parses_and_validates_card_list() {
+        assert_eq!(
+            parse_card_list(&["SERIALNO D2760001240100000000000000010000".to_owned()]).unwrap(),
+            ["D2760001240100000000000000010000"]
+        );
+        assert!(parse_card_list(&["SERIALNO not-a-serial".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn redacts_verify_apdu_diagnostics() {
+        let pin = b"123456";
+        let mut apdu = vec![0x00, 0x20, 0x00, 0x81, pin.len() as u8];
+        apdu.extend_from_slice(pin);
+
+        let description = describe_apdu(&apdu);
+        assert!(description.contains("VERIFY"));
+        assert!(!description.contains("123456"));
+        assert!(is_pin_bearing_verify(&apdu));
+
+        let command = apdu_command(&apdu, 4096);
+        assert!(command.expose_secret().contains("313233343536"));
+    }
+
+    #[test]
+    fn gpg_manages_pin_verification_without_inline_pin_data() {
+        let serial = "D2760001240100000000000000010000";
+
+        assert_eq!(checkpin_identifier(serial, PinType::Sign), serial);
+        assert_eq!(checkpin_identifier(serial, PinType::User), serial);
+        assert_eq!(
+            checkpin_identifier(serial, PinType::Admin),
+            format!("{serial}[CHV3]")
+        );
+    }
+}

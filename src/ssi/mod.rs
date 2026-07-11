@@ -1,15 +1,19 @@
+mod safe_web;
+mod verification;
+
+pub use verification::verify_credential;
+
 use std::error::Error;
 
-use base64::{engine, Engine};
-use did_web::DIDWeb;
+use base64::{Engine, engine};
 use iref::Iri;
 use ssi::{
     did::{
-        Context, Contexts, Document, VerificationMethod, VerificationMethodMap, DEFAULT_CONTEXT,
-        DIDURL,
+        Context, Contexts, DEFAULT_CONTEXT, DIDURL, Document, VerificationMethod,
+        VerificationMethodMap,
     },
     jsonld::ContextLoader,
-    jwk::{Base64urlUInt, OctetParams, Params, JWK},
+    jwk::{Base64urlUInt, JWK, OctetParams, Params},
     ldp::{ProofSuite, ProofSuiteType, SigningInput},
     vc::{Credential, LinkedDataProofOptions, URI},
 };
@@ -18,12 +22,23 @@ use crate::crypto::{
     key::{EncryptionKey, Key, SigningKey},
     smart_card::SmartCard,
 };
+use safe_web::SafeDidWebResolver;
 
 const SECURITY_JWS_2020_V1_CONTEXT: &str = "https://w3id.org/security/suites/jws-2020/v1";
 
+fn validate_credential_for_signing(credential: &Credential) -> Result<(), Box<dyn Error>> {
+    if credential.proof.is_some() {
+        return Err("credential to sign must be unsigned; remove the existing proof first".into());
+    }
+
+    credential
+        .validate_unsigned()
+        .map_err(|error| format!("invalid unsigned credential: {error}").into())
+}
+
 fn create_jwk(did_url: &DIDURL, key: &Key) -> JWK {
     let public_key_as_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(key.pub_data());
-    let kid = format!("{}#{}", did_url.did, public_key_as_base64.to_string());
+    let kid = format!("{}#{}", did_url.did, public_key_as_base64);
 
     JWK {
         public_key_use: None,
@@ -52,12 +67,25 @@ fn create_did_document(
     active_encryption_key_jwk: &JWK,
 ) -> Result<Document, Box<dyn Error>> {
     let did_url_str = did_url.to_string();
-    let active_signing_key_did_url: DIDURL =
-        DIDURL::try_from(active_signing_key_jwk.key_id.as_ref().unwrap().clone())
-            .expect("active signing key id is invalid")
-            .into();
+    let active_signing_key_did_url = DIDURL::try_from(
+        active_signing_key_jwk
+            .key_id
+            .as_ref()
+            .ok_or("active signing key JWK is missing its key id")?
+            .clone(),
+    )?;
+    let active_signing_key_id = active_signing_key_jwk
+        .key_id
+        .as_ref()
+        .ok_or("active signing key JWK is missing its key id")?
+        .clone();
+    let active_encryption_key_id = active_encryption_key_jwk
+        .key_id
+        .as_ref()
+        .ok_or("active encryption key JWK is missing its key id")?
+        .clone();
 
-    let mut document = Document::new(&did_url_str.as_str());
+    let mut document = Document::new(did_url_str.as_str());
     let security_context = Iri::from_str(SECURITY_JWS_2020_V1_CONTEXT)?.to_owned();
 
     document.context = Contexts::Many(vec![
@@ -66,7 +94,7 @@ fn create_did_document(
     ]);
 
     document.verification_method = Some(vec![VerificationMethod::Map(VerificationMethodMap {
-        id: active_signing_key_jwk.key_id.as_ref().unwrap().clone(),
+        id: active_signing_key_id,
         type_: String::from("JsonWebKey2020"),
         controller: did_url_str.clone(),
         public_key_jwk: Some(map_jwk_for_did_document(active_signing_key_jwk)),
@@ -74,7 +102,7 @@ fn create_did_document(
     })]);
 
     document.key_agreement = Some(vec![VerificationMethod::Map(VerificationMethodMap {
-        id: active_encryption_key_jwk.key_id.as_ref().unwrap().clone(),
+        id: active_encryption_key_id,
         type_: String::from("JsonWebKey2020"),
         controller: did_url_str.clone(),
         public_key_jwk: Some(map_jwk_for_did_document(active_encryption_key_jwk)),
@@ -138,9 +166,7 @@ impl Did {
         configuration: DidConfiguration,
         mut smart_card: Box<dyn SmartCard>,
     ) -> Result<Self, Box<dyn Error>> {
-        let card_info = smart_card
-            .get_card_info()
-            .expect("could not read card info");
+        let card_info = smart_card.get_card_info()?;
 
         let active_signing_key: SigningKey = card_info
             .keys
@@ -155,14 +181,13 @@ impl Did {
                 }
                 _ => None,
             })
-            .expect(
+            .cloned()
+            .ok_or_else(|| {
                 format!(
                     "active signing key '{}' required for did was not on smart card",
                     configuration.active_signing_key_fp
                 )
-                .as_str(),
-            )
-            .clone();
+            })?;
 
         let active_encryption_key: EncryptionKey = card_info
             .keys
@@ -177,14 +202,13 @@ impl Did {
                 }
                 _ => None,
             })
-            .expect(
+            .cloned()
+            .ok_or_else(|| {
                 format!(
                     "active encryption key '{}' required for did was not on smart card",
                     configuration.active_encryption_key_fp
                 )
-                .as_str(),
-            )
-            .clone();
+            })?;
 
         let active_signing_key_jwk = create_jwk(
             &configuration.did_url,
@@ -200,8 +224,7 @@ impl Did {
             &configuration.did_url,
             &active_signing_key_jwk,
             &active_encryption_key_jwk,
-        )
-        .expect("could not create did document");
+        )?;
 
         Ok(Self {
             smart_card,
@@ -218,6 +241,8 @@ impl Did {
         &mut self,
         unsigned_credential: &Credential,
     ) -> Result<Credential, Box<dyn Error>> {
+        validate_credential_for_signing(unsigned_credential)?;
+
         let proof_suite: Box<dyn ProofSuite> = Box::new(ProofSuiteType::JsonWebSignature2020);
         let mut signed_credential = unsigned_credential.clone();
 
@@ -229,37 +254,105 @@ impl Did {
                         self.active_signing_key_jwk
                             .key_id
                             .clone()
-                            .expect("signing key JWK should have kid"),
+                            .ok_or("signing key JWK is missing its key id")?,
                     )),
                     ..LinkedDataProofOptions::default()
                 },
-                &DIDWeb,
+                &SafeDidWebResolver,
                 &mut ContextLoader::default(),
                 &self.active_signing_key_jwk,
                 None,
             )
             .await
-            .expect("could not prepare the proof");
+            .map_err(|error| {
+                format!(
+                    "could not prepare the JSON-LD proof; define every custom credential type and claim in @context: {error}"
+                )
+            })?;
 
         let bytes_to_sign = match &proof_preparation.signing_input {
-            SigningInput::Bytes(base64_url_uint) => Some(base64_url_uint.0.clone()),
-            _ => None,
-        }
-        .expect("no bytes to sign");
+            SigningInput::Bytes(base64_url_uint) => base64_url_uint.0.clone(),
+            _ => return Err("proof suite did not produce byte input for signing".into()),
+        };
 
         let signature_base64 = engine::general_purpose::URL_SAFE_NO_PAD.encode(
             self.smart_card
-                .sign_data(&self.active_signing_key, bytes_to_sign)
-                .expect("could not sign"),
+                .sign_data(&self.active_signing_key, bytes_to_sign)?,
         );
 
         let proof = proof_suite
             .complete(&proof_preparation, &signature_base64)
             .await
-            .expect("could not complete proof preparation");
+            .map_err(|error| format!("could not complete the JSON-LD proof: {error}"))?;
 
         signed_credential.add_proof(proof);
 
         Ok(signed_credential)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use ssi::{
+        ldp::Proof,
+        vc::{Issuer, VCDateTime},
+    };
+
+    use super::*;
+    use crate::crypto::key::{SigningKey, SigningKeyCurve};
+
+    fn sample_credential() -> Credential {
+        let mut credential: Credential =
+            serde_json::from_str(include_str!("../../examples/unsigned-credential.json"))
+                .expect("sample credential must parse");
+        credential.issuer = Some(Issuer::URI(URI::String("did:web:example.com".to_owned())));
+        credential.issuance_date = Some(VCDateTime::from(Utc::now() - Duration::minutes(1)));
+        credential
+    }
+
+    #[tokio::test]
+    async fn sample_credential_can_prepare_json_web_signature_proof() {
+        let credential = sample_credential();
+
+        let did_url: DIDURL =
+            DIDURL::try_from("did:web:example.com".to_owned()).expect("test DID must parse");
+        let key = Key::Signing(SigningKey::new(
+            "test-signing-key".to_owned(),
+            SigningKeyCurve::Ed25519,
+            vec![0; 32],
+        ));
+        let jwk = create_jwk(&did_url, &key);
+        let proof_suite: Box<dyn ProofSuite> = Box::new(ProofSuiteType::JsonWebSignature2020);
+
+        if let Err(error) = proof_suite
+            .prepare(
+                &credential,
+                &LinkedDataProofOptions {
+                    verification_method: Some(URI::String(
+                        jwk.key_id.clone().expect("test JWK must have a key ID"),
+                    )),
+                    ..LinkedDataProofOptions::default()
+                },
+                &SafeDidWebResolver,
+                &mut ContextLoader::default(),
+                &jwk,
+                None,
+            )
+            .await
+        {
+            panic!("sample credential must prepare a JSON-LD proof: {error}");
+        }
+    }
+
+    #[test]
+    fn credential_for_signing_must_not_have_an_existing_proof() {
+        let mut credential = sample_credential();
+        credential.add_proof(Proof::new(ProofSuiteType::JsonWebSignature2020));
+
+        let error = validate_credential_for_signing(&credential)
+            .expect_err("an existing proof must be rejected");
+
+        assert!(error.to_string().contains("must be unsigned"));
     }
 }

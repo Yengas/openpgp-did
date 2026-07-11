@@ -1,9 +1,9 @@
 use std::{
     error::Error,
-    io::{stdin, stdout, Write},
+    io::{Write, stdin, stdout},
 };
 
-use ssi::did::{PrimaryDIDURL, DIDURL};
+use ssi::did::{DIDURL, PrimaryDIDURL};
 
 use crate::{
     crypto::{key::Key, smart_card::SmartCard},
@@ -29,7 +29,7 @@ pub async fn cmd_did_init() -> Result<(), Box<dyn Error>> {
     if does_valid_did_configuration_exist().await {
         let answer = ask_user("Do you want to overwrite existing Did Configuration? (y/n) ")?;
 
-        if answer.to_lowercase() != "y".to_string() {
+        if answer.to_lowercase() != "y" {
             println!("Exiting as you did not want to overwrite the existing configuration.");
 
             return Ok(());
