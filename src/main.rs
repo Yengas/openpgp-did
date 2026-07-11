@@ -5,7 +5,7 @@ mod ssi;
 
 use std::error::Error;
 
-use crate::cli::cli::run;
+use crate::cli::app::run;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

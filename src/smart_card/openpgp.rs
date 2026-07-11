@@ -1,5 +1,10 @@
 use std::error::Error;
 
+use crate::crypto::{
+    key::{EncryptionKey, EncryptionKeyCurve, Key, SigningKey, SigningKeyCurve},
+    smart_card::{SmartCard, SmartCardInfo},
+};
+use crate::smart_card::scdaemon::ScdaemonBackend;
 use openpgp_card::{
     Card,
     ocard::{
@@ -10,37 +15,9 @@ use openpgp_card::{
     },
     state::{Open, Transaction},
 };
-use pinentry::PassphraseInput;
-use secrecy::SecretString;
-
-use crate::crypto::{
-    key::{EncryptionKey, EncryptionKeyCurve, Key, SigningKey, SigningKeyCurve},
-    smart_card::{SmartCard, SmartCardInfo},
-};
-use crate::smart_card::scdaemon::ScdaemonBackend;
 
 pub struct OpenPgpSmartCard {
     openpgp: Card<Open>,
-}
-
-fn get_passphrase(dsc: u32) -> SecretString {
-    let binary = which::which("pinentry").expect("`pinentry` not installed");
-    let mut input = PassphraseInput::with_binary(binary).expect("could not initialize pinentry");
-
-    match input
-        .with_description(
-            format!(
-                "Enter your Yubikey passcode for signing a credential. Signing Counter is {}",
-                dsc
-            )
-            .as_str(),
-        )
-        .with_prompt("User Pin Code:")
-        .interact()
-    {
-        Ok(passphrase) => passphrase,
-        Err(err) => panic!("could not get the passphrase from the user: {:?}", err),
-    }
 }
 
 impl OpenPgpSmartCard {
@@ -60,12 +37,6 @@ impl OpenPgpSmartCard {
             .map_err(|err| format!("could not create transaction: {}", err).into())
     }
 
-    fn get_signing_counter(&mut self) -> Result<u32, Box<dyn Error>> {
-        let mut transaction = self.openpgp.transaction()?;
-
-        Ok(transaction.digital_signature_count()?)
-    }
-
     fn get_signing_key_fingerprint(&mut self) -> Result<Fingerprint, Box<dyn Error>> {
         self.transaction()?
             .fingerprint(KeyType::Signing)?
@@ -79,7 +50,7 @@ fn get_signing_key(
 ) -> Result<SigningKey, Box<dyn Error>> {
     let public_key = transaction
         .public_key_material(KeyType::Signing)
-        .expect("could not get signing key");
+        .map_err(|error| format!("could not read signing key material: {error}"))?;
 
     match public_key {
         PublicKeyMaterial::E(ecc_pub) => match ecc_pub.algo() {
@@ -110,7 +81,7 @@ fn get_encryption_key(
 ) -> Result<EncryptionKey, Box<dyn Error>> {
     let public_key = transaction
         .public_key_material(KeyType::Decryption)
-        .expect("could not get encryption key");
+        .map_err(|error| format!("could not read encryption key material: {error}"))?;
 
     match public_key {
         PublicKeyMaterial::E(ecc_pub) => match ecc_pub.algo() {
@@ -187,11 +158,11 @@ impl SmartCard for OpenPgpSmartCard {
             return Err("active card signing key does not match the chosen key".into());
         }
 
-        let signing_counter = self.get_signing_counter()?;
-        let passphrase = get_passphrase(signing_counter);
         let mut transaction = self.transaction()?;
 
-        transaction.verify_user_signing_pin(passphrase)?;
+        // The scdaemon backend implements this hook with SCD CHECKPIN, so
+        // GnuPG owns the PIN prompt and the PIN never enters an APDU here.
+        transaction.verify_user_signing_pinpad(&|| {})?;
 
         Ok(transaction.card().pso_compute_digital_signature(data)?)
     }

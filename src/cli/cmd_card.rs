@@ -185,6 +185,9 @@ fn do_card_diagnostics_checks() -> Vec<DiagnosticCheck> {
 
 pub async fn cmd_card_diagnostic() -> Result<(), Box<dyn Error>> {
     let card_diagnostic_checks = do_card_diagnostics_checks();
+    let all_checks_passed = card_diagnostic_checks
+        .iter()
+        .all(|check| check.check_result == DiagnosticCheckResult::Success);
     let mut table = Table::new();
 
     table.add_row(Row::new(vec![
@@ -206,5 +209,9 @@ pub async fn cmd_card_diagnostic() -> Result<(), Box<dyn Error>> {
 
     table.printstd();
 
-    Ok(())
+    if all_checks_passed {
+        Ok(())
+    } else {
+        Err("one or more card diagnostic checks failed".into())
+    }
 }

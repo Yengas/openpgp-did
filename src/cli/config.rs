@@ -95,8 +95,5 @@ pub async fn read_did_configuration() -> Result<Option<DidConfiguration>, Box<dy
 }
 
 pub async fn does_valid_did_configuration_exist() -> bool {
-    match read_did_configuration().await {
-        Ok(Some(_)) => true,
-        _ => false,
-    }
+    matches!(read_did_configuration().await, Ok(Some(_)))
 }

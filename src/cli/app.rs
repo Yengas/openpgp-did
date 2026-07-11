@@ -61,7 +61,9 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                                 .value_name("FILE")
                                 .help("Sets the signed credential to verify. Omit or use '-' for stdin."),
                         )
-                        .about("Verify a credential proof using its published DID document"),
+                        .about(
+                            "Verify credential structure, validity, status, and proof using its published DID document",
+                        ),
                 ),
         );
 

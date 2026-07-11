@@ -1,28 +1,28 @@
 use std::error::Error;
 
 use chrono::Timelike;
-use did_web::DIDWeb;
-use ssi::{
-    jsonld::ContextLoader,
-    vc::{Credential, Issuer, URI, VCDateTime},
-};
+use ssi::vc::{Credential, Issuer, URI, VCDateTime};
+
+use crate::ssi::verify_credential;
 
 use super::utils::{create_did, read_file_by_path};
 
-async fn read_unsigned_credential_by_path(
-    path: Option<&str>,
-) -> Result<Credential, Box<dyn Error>> {
+async fn read_credential_by_path(path: Option<&str>) -> Result<Credential, Box<dyn Error>> {
     let credential_json_str = read_file_by_path(path).await?;
 
     Ok(serde_json::from_str::<Credential>(&credential_json_str)?)
 }
 
 pub async fn cmd_ssi_sign_credential(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
+    let mut unsigned_credential = read_credential_by_path(file_path).await?;
+    if unsigned_credential.proof.is_some() {
+        return Err("credential to sign must be unsigned; remove the existing proof first".into());
+    }
+
     let mut did = create_did().await?;
-    let mut unsigned_credential = read_unsigned_credential_by_path(file_path).await?;
 
     unsigned_credential.issuer = Some(Issuer::URI(URI::String(did.did_url().to_string())));
-    if unsigned_credential.issuance_date == None {
+    if unsigned_credential.issuance_date.is_none() {
         let current_date_time = chrono::Utc::now().with_nanosecond(0).unwrap();
 
         unsigned_credential.issuance_date = Some(VCDateTime::from(current_date_time));
@@ -36,10 +36,8 @@ pub async fn cmd_ssi_sign_credential(file_path: Option<&str>) -> Result<(), Box<
 }
 
 pub async fn cmd_ssi_verify_credential(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
-    let credential = read_unsigned_credential_by_path(file_path).await?;
-    let verification_result = credential
-        .verify(None, &DIDWeb, &mut ContextLoader::default())
-        .await;
+    let credential = read_credential_by_path(file_path).await?;
+    let verification_result = verify_credential(&credential).await;
 
     println!("{}", serde_json::to_string_pretty(&verification_result)?);
 

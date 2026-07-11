@@ -1,0 +1,12 @@
+[advisories]
+# SSI 0.6 pulls these legacy implementations in for algorithms and network
+# helpers that this binary does not execute. See docs/dependency-security.md.
+ignore = [
+  "RUSTSEC-2022-0093", # ed25519-dalek software-signing oracle
+  "RUSTSEC-2023-0071", # rsa private-key timing attack
+  "RUSTSEC-2024-0344", # curve25519-dalek secret-scalar timing variability
+  "RUSTSEC-2025-0009", # ring AES overflow-check panic in legacy SSI HTTP stack
+  "RUSTSEC-2026-0098", # legacy SSI rustls-webpki name-constraint handling
+  "RUSTSEC-2026-0099", # legacy SSI rustls-webpki wildcard constraints
+  "RUSTSEC-2026-0104", # legacy SSI rustls-webpki CRL parsing panic
+]
