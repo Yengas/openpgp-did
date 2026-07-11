@@ -1,30 +1,26 @@
-use std::{
-    error::Error,
-    fmt::Write as FmtWrite,
-    io::{BufRead, BufReader, Write as IoWrite},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::{
-        Mutex,
-        mpsc::{self, Receiver, RecvTimeoutError},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+//! openpgp-card backend over GnuPG's scdaemon.
+//!
+//! Using scdaemon instead of opening the USB card directly lets this CLI share
+//! the card with Git and other GnuPG clients. Each card transaction owns one
+//! locked session, so exact-card selection, PIN verification, and signing
+//! cannot be interleaved. GnuPG owns PIN entry; direct PIN-bearing APDUs are
+//! rejected here. The child-process protocol is isolated in the agent module.
+
+mod agent;
+
+use std::{error::Error, fmt::Write as FmtWrite};
 
 use card_backend::{CardBackend, CardCaps, CardTransaction, PinType, SmartcardError};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
-const HEX_DUMP_BYTES_PER_LINE: usize = 16;
-const HEX_DUMP_FIELD_WIDTH: usize = 2 + (HEX_DUMP_BYTES_PER_LINE * 3);
+use self::agent::GpgConnectAgent;
+
 const ASSUAN_MAX_SERIALIZED_APDU_BYTES: u16 = 480;
 // openpgp-card uses this value as a chained payload size even though CardCaps
 // defines it as a serialized APDU size. Reserve the worst-case extended APDU
 // header so the serialized command still fits the Assuan command line.
 const OPENPGP_CARD_MAX_COMMAND_BYTES: u16 = ASSUAN_MAX_SERIALIZED_APDU_BYTES - 9;
 const SCDAEMON_MAX_RESPONSE_BYTES: u16 = 4096;
-const MAX_AGENT_RESPONSE_BYTES: usize = 64 * 1024;
-const AGENT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const AGENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Card backend that routes OpenPGP-card APDUs through one locked scdaemon
 /// session for the lifetime of each card transaction.
@@ -38,25 +34,6 @@ pub struct ScdaemonTransaction {
     locked: bool,
 }
 
-#[derive(Default)]
-struct AgentResponse {
-    data: Vec<u8>,
-    status_lines: Vec<String>,
-}
-
-struct GpgConnectAgent {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    output: Mutex<Receiver<AgentOutput>>,
-    closed: bool,
-}
-
-enum AgentOutput {
-    Line(String),
-    Eof,
-    Error(String),
-}
-
 impl ScdaemonBackend {
     pub fn try_new() -> Result<Self, Box<dyn Error>> {
         let mut session = GpgConnectAgent::spawn()?;
@@ -66,6 +43,7 @@ impl ScdaemonBackend {
         let response = session.command("SCD GETINFO card_list")?;
         let serial_numbers = parse_card_list(&response.status_lines)?;
 
+        // An ambiguous choice could silently sign with the wrong card.
         let serial_number = match serial_numbers.as_slice() {
             [serial_number] => serial_number.clone(),
             [] => return Err("expected exactly one card in scdaemon but got 0".into()),
@@ -103,6 +81,8 @@ impl CardBackend for ScdaemonBackend {
         &mut self,
         reselect_application: Option<&[u8]>,
     ) -> Result<Box<dyn CardTransaction + Send + Sync + '_>, SmartcardError> {
+        // Card selection belongs to the Assuan session. Pin that selection,
+        // then lock it so PIN verification and signing cannot be interleaved.
         let mut session = GpgConnectAgent::spawn().map_err(smartcard_error)?;
         select_card(&mut session, &self.serial_number).map_err(smartcard_error)?;
         session.command("SCD LOCK").map_err(|error| {
@@ -182,6 +162,8 @@ impl CardTransaction for ScdaemonTransaction {
         pin: PinType,
         _card_caps: &Option<CardCaps>,
     ) -> Result<Vec<u8>, SmartcardError> {
+        // This trait hook verifies without accepting PIN bytes. Scdaemon maps
+        // it to GnuPG's pinentry even when the reader has no hardware PIN pad.
         let identifier = checkpin_identifier(&self.serial_number, pin);
         self.session
             .command(&format!("SCD CHECKPIN {identifier}"))
@@ -221,138 +203,6 @@ impl Drop for ScdaemonTransaction {
 impl From<ScdaemonBackend> for Box<dyn CardBackend + Sync + Send> {
     fn from(backend: ScdaemonBackend) -> Self {
         Box::new(backend)
-    }
-}
-
-impl GpgConnectAgent {
-    fn spawn() -> Result<Self, Box<dyn Error>> {
-        let mut child = Command::new("gpg-connect-agent")
-            .args(["--unbuffered", "--hex", "--no-history"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or("gpg-connect-agent did not provide stdin")?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("gpg-connect-agent did not provide stdout")?;
-        let output = spawn_output_reader(stdout);
-
-        Ok(Self {
-            child,
-            stdin: Some(stdin),
-            output: Mutex::new(output),
-            closed: false,
-        })
-    }
-
-    fn command(&mut self, command: &str) -> Result<AgentResponse, Box<dyn Error>> {
-        self.command_bytes(command.as_bytes())
-    }
-
-    fn secret_command(&mut self, command: &SecretString) -> Result<AgentResponse, Box<dyn Error>> {
-        self.command_bytes(command.expose_secret().as_bytes())
-    }
-
-    fn command_bytes(&mut self, command: &[u8]) -> Result<AgentResponse, Box<dyn Error>> {
-        if command.iter().any(|byte| matches!(byte, b'\r' | b'\n')) {
-            return Err("gpg-connect-agent command contains a newline".into());
-        }
-
-        let stdin = self
-            .stdin
-            .as_mut()
-            .ok_or("gpg-connect-agent session is closed")?;
-        stdin.write_all(command)?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
-
-        let mut response = AgentResponse::default();
-        let mut frame_offset = 0;
-        let deadline = Instant::now() + AGENT_COMMAND_TIMEOUT;
-
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                self.close();
-                return Err("gpg-connect-agent command timed out".into());
-            }
-
-            let output = {
-                let receiver = self
-                    .output
-                    .lock()
-                    .map_err(|_| "gpg-connect-agent output reader lock was poisoned")?;
-                receiver.recv_timeout(remaining)
-            };
-            let line = match output {
-                Ok(AgentOutput::Line(line)) => line,
-                Ok(AgentOutput::Eof) => {
-                    let status = self.child.try_wait()?;
-                    return Err(format!(
-                        "gpg-connect-agent closed its output unexpectedly{}",
-                        status
-                            .map(|status| format!(" with status {status}"))
-                            .unwrap_or_default()
-                    )
-                    .into());
-                }
-                Ok(AgentOutput::Error(error)) => {
-                    return Err(format!("could not read gpg-connect-agent output: {error}").into());
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    self.close();
-                    return Err("gpg-connect-agent command timed out".into());
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err("gpg-connect-agent output reader stopped unexpectedly".into());
-                }
-            };
-
-            let line = line.trim_end_matches(['\r', '\n']);
-
-            if line.starts_with("D[") {
-                append_hex_dump_data_line(&mut response.data, &mut frame_offset, line)?;
-            } else if let Some(status) = line.strip_prefix("S ") {
-                response.status_lines.push(status.to_owned());
-            } else if line == "OK" || line.starts_with("OK ") {
-                response.data = percent_decode(&response.data)?;
-                return Ok(response);
-            } else if line.starts_with("ERR ") {
-                return Err(format!("scdaemon returned {line}").into());
-            } else if line.starts_with('#') || line.is_empty() {
-                continue;
-            } else if line.starts_with("INQUIRE ") {
-                return Err(format!("unsupported scdaemon inquiry: {line}").into());
-            } else {
-                return Err(format!("unexpected gpg-connect-agent output: {line}").into());
-            }
-        }
-    }
-
-    fn close(&mut self) {
-        if self.closed {
-            return;
-        }
-        self.closed = true;
-
-        // EOF is the reliable, protocol-independent way to end the client and
-        // release a card lock. Bound both graceful exit and forced shutdown.
-        drop(self.stdin.take());
-        if !wait_for_child(&mut self.child, AGENT_SHUTDOWN_TIMEOUT) {
-            let _ = self.child.kill();
-            let _ = wait_for_child(&mut self.child, AGENT_SHUTDOWN_TIMEOUT);
-        }
-    }
-}
-
-impl Drop for GpgConnectAgent {
-    fn drop(&mut self) {
-        self.close();
     }
 }
 
@@ -400,45 +250,6 @@ fn validate_serial_number(serial_number: &str) -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
-}
-
-fn spawn_output_reader(stdout: ChildStdout) -> Receiver<AgentOutput> {
-    let (sender, receiver) = mpsc::channel();
-
-    thread::spawn(move || {
-        let mut stdout = BufReader::new(stdout);
-        loop {
-            let mut line = String::new();
-            match stdout.read_line(&mut line) {
-                Ok(0) => {
-                    let _ = sender.send(AgentOutput::Eof);
-                    break;
-                }
-                Ok(_) => {
-                    if sender.send(AgentOutput::Line(line)).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = sender.send(AgentOutput::Error(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-
-    receiver
-}
-
-fn wait_for_child(child: &mut Child, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) | Err(_) => return false,
-        }
-    }
 }
 
 fn checkpin_identifier(serial_number: &str, pin: PinType) -> String {
@@ -490,91 +301,6 @@ fn is_pin_bearing_verify(cmd: &[u8]) -> bool {
     cmd.len() > 5 && cmd.get(1) == Some(&0x20)
 }
 
-fn parse_hex_dump_data_line(line: &str) -> Result<(usize, Vec<u8>), Box<dyn Error>> {
-    let Some((offset, after_offset)) = line.split_once(']') else {
-        return Err(format!("malformed data line: {line}").into());
-    };
-    let Some(offset) = offset.strip_prefix("D[") else {
-        return Err(format!("malformed data line: {line}").into());
-    };
-
-    if offset.len() != 4 || !offset.chars().all(|char| char.is_ascii_hexdigit()) {
-        return Err(format!("malformed data-line offset: {line}").into());
-    }
-    let offset = usize::from_str_radix(offset, 16)?;
-
-    let hex_field = after_offset
-        .get(..HEX_DUMP_FIELD_WIDTH)
-        .ok_or_else(|| format!("short data line: {line}"))?;
-    let mut bytes = Vec::new();
-
-    for token in hex_field.split_whitespace() {
-        if token.len() != 2 || !token.chars().all(|char| char.is_ascii_hexdigit()) {
-            return Err(format!("malformed hex byte in data line: {line}").into());
-        }
-        bytes.push(u8::from_str_radix(token, 16)?);
-    }
-
-    if bytes.len() > HEX_DUMP_BYTES_PER_LINE {
-        return Err(format!("too many bytes in data line: {line}").into());
-    }
-
-    Ok((offset, bytes))
-}
-
-fn append_hex_dump_data_line(
-    data: &mut Vec<u8>,
-    frame_offset: &mut usize,
-    line: &str,
-) -> Result<(), Box<dyn Error>> {
-    let (offset, bytes) = parse_hex_dump_data_line(line)?;
-
-    // --hex offsets are local to each Assuan D frame. Long responses can
-    // therefore legitimately restart at D[0000] more than once.
-    if offset == 0 {
-        *frame_offset = 0;
-    }
-    if offset != *frame_offset {
-        return Err(format!(
-            "non-contiguous gpg-connect-agent data offset: expected {:04X}, got {offset:04X}",
-            *frame_offset
-        )
-        .into());
-    }
-    if data.len() + bytes.len() > MAX_AGENT_RESPONSE_BYTES {
-        return Err(format!(
-            "gpg-connect-agent response exceeded {MAX_AGENT_RESPONSE_BYTES} bytes"
-        )
-        .into());
-    }
-
-    *frame_offset += bytes.len();
-    data.extend(bytes);
-    Ok(())
-}
-
-fn percent_decode(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut decoded = Vec::new();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return Err("unterminated percent escape".into());
-            }
-
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3])?;
-            decoded.push(u8::from_str_radix(hex, 16)?);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-
-    Ok(decoded)
-}
-
 fn smartcard_error(error: impl std::fmt::Display) -> SmartcardError {
     SmartcardError::Error(error.to_string())
 }
@@ -582,72 +308,10 @@ fn smartcard_error(error: impl std::fmt::Display) -> SmartcardError {
 #[cfg(test)]
 mod tests {
     use super::{
-        apdu_command, append_hex_dump_data_line, checkpin_identifier, describe_apdu,
-        is_pin_bearing_verify, parse_card_list, parse_hex_dump_data_line, percent_decode,
+        apdu_command, checkpin_identifier, describe_apdu, is_pin_bearing_verify, parse_card_list,
     };
     use card_backend::PinType;
     use secrecy::ExposeSecret;
-
-    #[test]
-    fn parses_gpg_connect_agent_hex_dump_data_line() {
-        let line = "D[0000]  90 00                                              ..              ";
-
-        assert_eq!(
-            parse_hex_dump_data_line(line).unwrap(),
-            (0, vec![0x90, 0x00])
-        );
-    }
-
-    #[test]
-    fn ignores_hex_looking_ascii_display_column() {
-        let line = "D[0000]  41 42 20 90 00                                     AB ..           ";
-
-        assert_eq!(
-            parse_hex_dump_data_line(line).unwrap(),
-            (0, vec![0x41, 0x42, 0x20, 0x90, 0x00])
-        );
-    }
-
-    #[test]
-    fn parses_full_sixteen_byte_hex_dump_line() {
-        let line = "D[0000]  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  0123456789ABCDEF";
-
-        assert_eq!(
-            parse_hex_dump_data_line(line).unwrap(),
-            (0, (0_u8..16).collect())
-        );
-    }
-
-    #[test]
-    fn accepts_offsets_restarting_for_new_assuan_data_frames() {
-        let mut data = Vec::new();
-        let mut frame_offset = 0;
-        append_hex_dump_data_line(
-            &mut data,
-            &mut frame_offset,
-            "D[0000]  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  ................",
-        )
-        .unwrap();
-        append_hex_dump_data_line(
-            &mut data,
-            &mut frame_offset,
-            "D[0010]  10 11                                             ..              ",
-        )
-        .unwrap();
-        append_hex_dump_data_line(
-            &mut data,
-            &mut frame_offset,
-            "D[0000]  12 13                                             ..              ",
-        )
-        .unwrap();
-
-        assert_eq!(data, (0_u8..20).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn decodes_assuan_percent_escapes() {
-        assert_eq!(percent_decode(b"\xC0%0A%25").unwrap(), [0xC0, 0x0A, b'%']);
-    }
 
     #[test]
     fn parses_and_validates_card_list() {

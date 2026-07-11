@@ -160,8 +160,8 @@ impl SmartCard for OpenPgpSmartCard {
 
         let mut transaction = self.transaction()?;
 
-        // The scdaemon backend implements this hook with SCD CHECKPIN, so
-        // GnuPG owns the PIN prompt and the PIN never enters an APDU here.
+        // This oddly named hook verifies without supplying PIN bytes. The
+        // scdaemon backend maps it to GnuPG's pinentry, not a hardware PIN pad.
         transaction.verify_user_signing_pinpad(&|| {})?;
 
         Ok(transaction.card().pso_compute_digital_signature(data)?)

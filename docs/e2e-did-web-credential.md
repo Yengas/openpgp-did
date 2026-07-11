@@ -150,20 +150,13 @@ The command prints a verification result and exits successfully only when its `e
 - Supported `RevocationList2020Status` and `StatusList2021Entry` status lists when present.
 - Status-list issuer, identifier, purpose, index bounds, proof, and revoked bit.
 
-The built-in resolver accepts only public `did:web` issuers and public HTTPS status-list URLs. It rejects private/local destinations, pins public DNS results, ignores system proxy settings, disables redirects, and uses bounded timeouts. DID documents are limited to 1 MiB, status-list credential JSON to 2 MiB, and decompressed status bitstrings to 16 MiB. Environments that require an outbound HTTP proxy are intentionally unsupported because proxy-side DNS would bypass origin pinning.
+Verification resolves only public `did:web` issuers and public HTTPS status-list URLs. Private hosts, redirects, explicit ports, and proxy-only environments are intentionally unsupported; see the [design notes](./design.md) for why.
 
-The public [POSSIBLE-X Verifier](https://possible.fokus.fraunhofer.de/verifier/) is an optional independent interoperability experiment. It uses Gaia-X AISBL's [JsonWebSignature2020 TypeScript library](https://gitlab.com/gaia-x/lab/libraries/json-web-signature-2020), but it is aimed at Gaia-X Compliance Credentials and may reject generic VC 1.x credentials. The local command above is the primary project verification path.
+### Optional interoperability check
 
-The verifier fetches your `did:web` document from the public internet. Only submit test credentials or credentials you are comfortable sharing with that third-party service.
+The public [POSSIBLE-X Verifier](https://possible.fokus.fraunhofer.de/verifier/) can be used as an independent experiment, but it targets Gaia-X Compliance Credentials and may reject a generic VC 1.x credential. The local command above is the primary verification path.
 
-The verifier needs support for:
-
-- `did:web` resolution over HTTPS.
-- `JsonWebKey2020`.
-- `JsonWebSignature2020`.
-- Ed25519 / `EdDSA` detached JWS verification.
-
-This proof format is from the VC 1.x ecosystem; some newer VC tooling focuses only on Data Integrity proofs, so it will not verify this credential. A successful result confirms that the proof signature matches the Ed25519 public key in your published DID document.
+Only submit test credentials or credentials you are comfortable sharing with that service. Other external tools must support `did:web`, `JsonWebKey2020`, `JsonWebSignature2020`, and Ed25519 detached JWS verification.
 
 If verification fails:
 
@@ -174,16 +167,10 @@ If verification fails:
 
 ## PIN And Card Session Notes
 
-The current implementation uses GnuPG's `scdaemon` as the card transport, but the signature itself is still produced through OpenPGP-card APDUs:
+Signing follows one card transaction:
 
-1. The CLI asks GnuPG to verify the PIN with `SCD CHECKPIN`; GnuPG owns the `pinentry` interaction and its cache policy.
-2. `scdaemon` verifies the card PIN without returning it to the CLI.
-3. It sends `PSO: COMPUTE DIGITAL SIGNATURE` through `scdaemon`.
+1. The CLI selects and locks the single inserted card through `scdaemon`.
+2. GnuPG verifies the PIN through `pinentry`; the CLI never receives it.
+3. The CLI sends the credential signing operation through the same session.
 
-Card selection, PIN verification, and signing stay in one exclusive scdaemon session, so another GnuPG client cannot interleave them. Direct PIN-bearing VERIFY APDUs are rejected by the backend; the PIN is never placed in a process argument, application error, or CLI-generated APDU command. The session has bounded command and shutdown timeouts, and closing it releases the card lock even during error unwinding.
-
-GnuPG's normal PIN-cache behavior applies to `SCD CHECKPIN`. Card configuration may still require confirmation for every signature.
-
-The natural alternative would be to ask `scdaemon` or `gpg-agent` to perform the signing operation directly, rather than only managing PIN verification.
-
-For this project, that is not a direct swap today. The credential proof needs an Ed25519 signature over the exact SSI/JWS signing bytes. GnuPG's agent signing protocol signs hashes, and on the tested GnuPG/scdaemon setup `SCD PKSIGN --hash=none OPENPGP.1` is advertised in help but rejected by scdaemon for the OpenPGP signing slot. So the current APDU signing path remains necessary unless we find a GnuPG-supported raw Ed25519 signing route or change the proof format to something GnuPG can sign natively.
+Keeping those steps together prevents another GnuPG client from changing card state midway through signing. GnuPG's normal PIN-cache behavior applies, and card configuration may still require confirmation for every signature. See the [design notes](./design.md) for the rationale and limitations.

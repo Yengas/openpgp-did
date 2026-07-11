@@ -2,7 +2,7 @@
 
 `openpgp-did` creates `did:web` documents and signs Verifiable Credentials with the Ed25519 signing key on an OpenPGP smart card.
 
-Card commands use one locked GnuPG `scdaemon` session per operation rather than opening the card directly. This lets the CLI coordinate safely with normal GnuPG uses such as Git commit signing.
+Card commands use one locked GnuPG `scdaemon` session per operation so they coordinate safely with normal GnuPG uses such as Git commit signing. The [design notes](./docs/design.md) explain this and the verifier's security boundaries.
 
 ## Features
 
@@ -59,7 +59,7 @@ For platform setup, card-key preparation, `did:web` publishing, credential signi
 
 `openpgp-did ssi verify-credential` fails closed. It checks credential structure, issuance and expiration times, issuer assertion authorization, applicable proofs until one succeeds, and supported credential status lists.
 
-Network resolution is limited to public `did:web` and HTTPS status-list hosts. The verifier rejects local/private addresses, pins DNS results for each HTTPS request, ignores system proxy settings, disables redirects, applies connection/request timeouts, and caps both downloaded and decompressed status-list sizes. Environments that require an outbound HTTP proxy are intentionally unsupported because a proxy would bypass origin DNS pinning. It is still a CLI verifier, not an application-specific trust-policy engine.
+Because credentials control the URLs being fetched, resolution is restricted to bounded requests to public HTTPS hosts. Private hosts, redirects, explicit ports, and proxy-only environments are unsupported. See the [design notes](./docs/design.md) for the rationale and tradeoffs.
 
 Dependency advisories are enforced in CI. See [Dependency Security](./docs/dependency-security.md) for the narrow, unreachable legacy SSI exceptions and their removal criteria.
 
@@ -72,7 +72,7 @@ gpgconf --kill scdaemon
 gpgconf --kill gpg-agent
 ```
 
-If the CLI reports that the card is busy, let the other GnuPG operation finish and retry. GnuPG owns PIN entry through `SCD CHECKPIN`; the CLI rejects direct PIN-bearing VERIFY APDUs. Card APDUs are sent over the child process's stdin, never process arguments, and APDU data is redacted from CLI errors.
+If the CLI reports that the card is busy, let the other GnuPG operation finish and retry. GnuPG owns PIN entry through `pinentry`, so its normal PIN-cache behavior applies.
 
 ## Contributing
 
